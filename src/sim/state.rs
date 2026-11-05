@@ -135,12 +135,20 @@ pub struct Rose {
     pub falling: bool,
 }
 
+/// One-way airborne ledge in simulation subpixels.
+#[derive(Clone, Copy, Hash, Debug)]
+pub struct Platform { pub left: i32, pub right: i32, pub height: i32 }
+
 /// The whole simulation. `Clone` + `Hash` make rollback and desync checks cheap. Character data
 /// isn't part of the state: it's constant and passed to `step`.
 #[derive(Clone, Hash, Debug)]
 pub struct GameState {
     pub frame: u32,
-    pub fighters: [Fighter; 2],
+    pub teams: Vec<u8>,
+    pub targets: Vec<usize>,
+    pub stage_half_width: i32,
+    pub platforms: Vec<Platform>,
+    pub fighters: Vec<Fighter>,
     /// Every projectile in flight.
     pub projectiles: Vec<Projectile>,
     /// Every minion on the field.
@@ -148,7 +156,7 @@ pub struct GameState {
     /// Glitched areas and spills on the map.
     pub zones: Vec<Zone>,
     /// Each fighter's raven.
-    pub ravens: [Raven; 2],
+    pub ravens: Vec<Raven>,
     /// Where projectiles were just destroyed (subpixels) and on which frame, kept a few frames so the
     /// screen can show a puff.
     pub cleared: Vec<(i32, i32, u32)>,
@@ -161,7 +169,22 @@ pub struct GameState {
     pub round: u8,
     pub phase: Phase,
     /// Who has the pause menu open (online the match goes on without them).
-    pub away: [bool; 2],
+    pub away: Vec<bool>,
+}
+
+/// Find the nearest living fighter on another team. Equal distances favor the
+/// lower fighter index, keeping targeting deterministic for rollback.
+pub fn nearest_enemy(fighters: &[Fighter], teams: &[u8], attacker: usize) -> Option<usize> {
+    let fighter = fighters.get(attacker)?;
+    let team = *teams.get(attacker)?;
+    fighters.iter().enumerate()
+        .filter(|(i, other)| *i != attacker && other.health > 0 && teams.get(*i).is_some_and(|&t| t != team))
+        .min_by_key(|(i, other)| {
+            let dx = i64::from(other.x) - i64::from(fighter.x);
+            let dy = i64::from(other.y) - i64::from(fighter.y);
+            (i128::from(dx) * i128::from(dx) + i128::from(dy) * i128::from(dy), *i)
+        })
+        .map(|(i, _)| i)
 }
 
 impl GameState {
@@ -182,23 +205,27 @@ impl GameState {
     pub fn new() -> Self {
         GameState {
             frame: 0,
-            fighters: Self::starting_fighters(),
+            teams: vec![0, 1],
+            targets: vec![1, 0],
+            stage_half_width: Self::STAGE_HALF_WIDTH,
+            platforms: Vec::new(),
+            fighters: Self::starting_fighters().to_vec(),
             projectiles: Vec::new(),
             minions: Vec::new(),
             zones: Vec::new(),
-            ravens: [Raven::idle(); 2],
+            ravens: vec![Raven::idle(); 2],
             cleared: Vec::new(),
             impacts: Vec::new(),
             timer: Self::ROUND_FRAMES,
             wins: [0; 2],
             round: 1,
             phase: Phase::Fighting,
-            away: [false; 2],
+            away: vec![false; 2],
         }
     }
 
     /// Give each fighter their own starting health.
-    pub fn set_health(&mut self, health: [i32; 2]) {
+    pub fn set_health<const N: usize>(&mut self, health: [i32; N]) {
         for (f, h) in self.fighters.iter_mut().zip(health) {
             f.max_health = h;
             f.health = h;
@@ -211,46 +238,71 @@ impl GameState {
 
     /// Advance one frame (60 a second). Fighters are processed in index order, so the result depends
     /// only on the state and the inputs.
-    pub fn step(&mut self, inputs: [Input; 2], chars: [&CharacterData; 2]) {
+    pub fn team_match() -> Self {
+        let mut state = Self::new();
+        state.teams = vec![0, 1, 0, 1];
+        state.targets = vec![1, 0, 1, 0];
+        state.stage_half_width = 700 * PX;
+        state.platforms = [(-530, -350, 65), (-240, -70, 110), (70, 240, 110), (350, 530, 65), (-85, 85, 185)]
+            .into_iter().map(|(left, right, height)| Platform { left: left * PX, right: right * PX, height: height * PX }).collect();
+        state.fighters = vec![Fighter::new(-180 * PX, 1), Fighter::new(180 * PX, -1), Fighter::new(-280 * PX, 1), Fighter::new(280 * PX, -1)];
+        state.ravens = vec![Raven::idle(); 4];
+        state.away = vec![false; 4];
+        state
+    }
+
+    pub fn target(&self, fighter: usize) -> usize { self.targets[fighter] }
+
+    pub fn step<const N: usize>(&mut self, inputs: [Input; N], chars: [&CharacterData; N]) {
+        self.step_many(&inputs, &chars);
+    }
+
+    fn step_many(&mut self, inputs: &[Input], chars: &[&CharacterData]) {
         if let Phase::Briefing(mut ready) = self.phase {
             for (i, input) in inputs.iter().enumerate() {
                 if input.has(Input::READY) {
                     ready |= 1 << i;
                 }
             }
-            self.phase = if ready == 0b11 { Phase::Countdown(0) } else { Phase::Briefing(ready) };
+            self.phase = if ready == (1 << self.fighters.len()) - 1 { Phase::Countdown(0) } else { Phase::Briefing(ready) };
             return;
         }
-        self.away = [inputs[0].has(Input::AWAY), inputs[1].has(Input::AWAY)];
+        self.away = inputs.iter().map(|i| i.has(Input::AWAY)).collect();
         if self.phase != Phase::MatchOver {
-            if let Some(loser) = (0..2).find(|&i| inputs[i].has(Input::SURRENDER)) {
+            if let Some(loser) = (0..self.fighters.len()).find(|&i| inputs[i].has(Input::SURRENDER)) {
                 self.surrender(loser);
                 return;
             }
+        }
+        for i in 0..self.fighters.len() {
+            self.targets[i] = nearest_enemy(&self.fighters, &self.teams, i).unwrap_or(self.targets[i]);
         }
         self.frame += 1;
         let now = self.frame;
         self.cleared.retain(|c| c.2 + 6 > now);
         self.impacts.retain(|c| c.2 + 6 > now);
         let fighting = self.phase == Phase::Fighting;
-        let inputs = if fighting { inputs } else { [Input::default(); 2] };
-        let inputs = self.reversed(inputs);
+        let neutral = vec![Input::default(); self.fighters.len()];
+        let inputs = if fighting { inputs } else { &neutral };
 
-        let before = [self.fighters[0].x, self.fighters[1].x];
-        let gap = (before[0] - before[1]).abs();
-        for i in 0..2 {
-            self.fighters[i].foe_dist = gap;
+        let inputs = self.reversed(inputs);
+        let inputs = inputs.as_slice();
+        let before: Vec<_> = self.fighters.iter().map(|f| f.x).collect();
+        for i in 0..self.fighters.len() {
+            let f = &self.fighters[i];
+            let x = f.x + f.vx;
+            let floor = self.platforms.iter().filter(|p| x >= p.left && x <= p.right && f.y >= p.height)
+                .map(|p| p.height).max().unwrap_or(0);
+            self.fighters[i].floor_y = floor;
+            self.fighters[i].foe_dist = (self.fighters[i].x - self.fighters[self.targets[i]].x).abs();
             self.fighters[i].raven_away = self.ravens[i].active;
-            self.fighters[i].step(inputs[i], chars[i]);
-            // a dash towards the enemy behind a book
+            let input = if self.fighters[i].health > 0 { inputs[i] } else { Input::default() };
+            self.fighters[i].step(input, chars[i]);
             let f = &mut self.fighters[i];
             f.covered = chars[i].dash_shield && f.state == FighterState::Dash && f.move_dir == f.facing;
         }
-        // in a glitched area they move at a third of their speed
-        for i in 0..2 {
-            if self.in_zone(i, super::data::ZoneKind::Glitch) {
-                self.fighters[i].x = before[i] + (self.fighters[i].x - before[i]) / 3;
-            }
+        for i in 0..self.fighters.len() {
+            if self.in_zone(i, super::data::ZoneKind::Glitch) { self.fighters[i].x = before[i] + (self.fighters[i].x - before[i]) / 3; }
         }
 
         self.clamp_to_stage();
@@ -278,7 +330,7 @@ impl GameState {
                 if self.fighters.iter().all(|f| f.hitstop == 0) {
                     self.timer = self.timer.saturating_sub(1);
                 }
-                if self.fighters.iter().any(|f| f.health <= 0) || self.timer == 0 {
+                if (0..2).any(|team| self.fighters.iter().enumerate().filter(|(i, _)| self.teams[*i] == team).all(|(_, f)| f.health <= 0)) || self.timer == 0 {
                     self.end_round();
                 }
             }
@@ -302,8 +354,8 @@ impl GameState {
 
     /// `who` gives up: the match is over, the other player wins, and `who` is on the floor.
     fn surrender(&mut self, who: usize) {
-        self.wins[1 - who] = Self::ROUNDS_TO_WIN;
-        self.wins[who] = self.wins[who].min(Self::ROUNDS_TO_WIN - 1);
+        self.wins[1 - self.teams[who] as usize] = Self::ROUNDS_TO_WIN;
+        self.wins[self.teams[who] as usize] = self.wins[self.teams[who] as usize].min(Self::ROUNDS_TO_WIN - 1);
         let f = &mut self.fighters[who];
         f.health = 0;
         f.state = FighterState::Ko;
@@ -324,7 +376,8 @@ impl GameState {
     }
 
     fn end_round(&mut self) {
-        let (h0, h1) = (self.fighters[0].health.max(0), self.fighters[1].health.max(0));
+        let total = |team| self.fighters.iter().enumerate().filter(|(i, _)| self.teams[*i] == team).map(|(_, f)| f.health.max(0)).sum::<i32>();
+        let (h0, h1) = (total(0), total(1));
         // equal health (double KO or a time-up tie) gives both a point
         if h0 >= h1 {
             self.wins[0] += 1;
@@ -336,13 +389,13 @@ impl GameState {
     }
 
     fn start_next_round(&mut self) {
-        let health = [self.fighters[0].max_health, self.fighters[1].max_health];
-        self.fighters = Self::starting_fighters();
-        self.set_health(health);
+        let health: Vec<_> = self.fighters.iter().map(|f| f.max_health).collect();
+        self.fighters = if self.fighters.len() == 4 { Self::team_match().fighters } else { Self::starting_fighters().to_vec() };
+        for (f, h) in self.fighters.iter_mut().zip(health) { f.health = h; f.max_health = h; }
         self.projectiles.clear();
         self.minions.clear();
         self.zones.clear();
-        self.ravens = [Raven::idle(); 2];
+        self.ravens = vec![Raven::idle(); self.fighters.len()];
         self.cleared.clear();
         self.impacts.clear();
         self.timer = Self::ROUND_FRAMES;
@@ -364,12 +417,13 @@ impl GameState {
         if kind == super::data::ZoneKind::Spill && !f.grounded() {
             return false;
         }
-        self.zones.iter().any(|z| z.kind == kind && z.owner != who && (f.x - z.x).abs() <= z.half_width)
+        self.zones.iter().any(|z| z.kind == kind && self.teams[z.owner] != self.teams[who] && (f.x - z.x).abs() <= z.half_width)
     }
 
     /// Standing on a spill reverses the controls: left and right (and the rolls) swap, and so do up and down.
-    fn reversed(&self, mut inputs: [Input; 2]) -> [Input; 2] {
-        for i in 0..2 {
+    fn reversed(&self, inputs: &[Input]) -> Vec<Input> {
+        let mut inputs = inputs.to_vec();
+        for i in 0..self.fighters.len() {
             if !self.in_zone(i, super::data::ZoneKind::Spill) {
                 continue;
             }
@@ -391,7 +445,7 @@ impl GameState {
     }
 
     /// Glitched areas appear on the opponent when their move reaches its frame; every zone ages and goes.
-    fn spawn_zones(&mut self, chars: [&CharacterData; 2]) {
+    fn spawn_zones(&mut self, chars: &[&CharacterData]) {
         for z in &mut self.zones {
             z.age += 1;
         }
@@ -411,7 +465,7 @@ impl GameState {
         for k in 0..self.zones.len() {
             let z = self.zones[k];
             if z.tick_damage > 0 && z.tick_every > 0 && z.age % z.tick_every == 0 {
-                for who in 0..2 {
+                for who in 0..self.fighters.len() {
                     if self.in_zone(who, z.kind) && self.fighters[who].health > 0 {
                         self.fighters[who].health -= z.tick_damage;
                     }
@@ -426,7 +480,7 @@ impl GameState {
                 }
             }
         }
-        for owner in 0..2 {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -434,7 +488,7 @@ impl GameState {
             let mv = &chars[owner].moves[f.attack];
             let Some(zone) = mv.zone.filter(|z| z.at_frame > 0) else { continue };
             if f.state_frame == zone.at_frame {
-                let x = self.fighters[1 - owner].x;
+                let x = self.fighters[self.targets[owner]].x;
                 let index = f.attack;
                 self.add_zone(owner, index, zone, x);
             }
@@ -479,7 +533,7 @@ impl GameState {
             }
             // a move with a high and a low version (the special) keeps its height so crouching and jumping still dodge it
             if mv.low_hitbox.is_none() {
-                let foe = &self.fighters[1 - attacker];
+                let foe = &self.fighters[self.targets[attacker]];
                 let foe_mid = foe.y + foe.height() * PX / 2;
                 let slide = (foe_mid - (y0 + y1) / 2).clamp(-2 * a, 2 * a);
                 y0 += slide - a;
@@ -510,23 +564,25 @@ impl GameState {
         [f.x - Fighter::HALF_WIDTH, f.y, f.x + Fighter::HALF_WIDTH, f.y + f.height() * PX]
     }
 
-    fn resolve_hits(&mut self, inputs: [Input; 2], chars: [&CharacterData; 2]) {
+    fn resolve_hits(&mut self, inputs: &[Input], chars: &[&CharacterData]) {
         // decide everything from the start-of-frame state so simultaneous hits (trades) are symmetric
-        let mut landed = [false; 2];
-        for a in 0..2 {
-            if let Some(h) = self.hitbox(a, chars[a]) {
-                let d = self.hurtbox(1 - a);
+        let targets: Vec<_> = (0..self.fighters.len()).map(|a| nearest_enemy(&self.fighters, &self.teams, a)).collect();
+        let mut landed = vec![false; self.fighters.len()];
+        for a in 0..self.fighters.len() {
+            if let (Some(h), Some(target)) = (self.hitbox(a, chars[a]), targets[a]) {
+                let d = self.hurtbox(target);
                 landed[a] = h[0] < d[2] && d[0] < h[2] && h[1] < d[3] && d[1] < h[3];
             }
         }
-        let blocks = [self.can_block(0, inputs[0]), self.can_block(1, inputs[1])];
+        let blocks: Vec<_> = (0..self.fighters.len()).map(|i| self.can_block(i, inputs[i])).collect();
 
-        for a in 0..2 {
+        for a in 0..self.fighters.len() {
+            let Some(target) = targets[a] else { continue };
             // a swing can also cut down goblins it reaches, even if it misses the fighter
             if let Some(h) = self.hitbox(a, chars[a]) {
                 let mv = &chars[a].moves[self.fighters[a].attack];
                 let power = if self.fighters[a].finisher { 150 } else { 100 };
-                if self.hit_minion(1 - a, h, mv.damage * power / 100, mv.button == super::data::Button::Light) && !landed[a] {
+                if self.hit_minion(target, h, mv.damage * power / 100, mv.button == super::data::Button::Light) && !landed[a] {
                     self.fighters[a].hit_done = true;
                     self.fighters[a].hitstop = mv.hitstop;
                 }
@@ -539,7 +595,7 @@ impl GameState {
             let adjusted = base.for_window(base.window(self.fighters[a].state_frame));
             let mv = &*adjusted;
             let dir = if mv.radial {
-                if self.fighters[1 - a].x >= self.fighters[a].x { 1 } else { -1 }
+                if self.fighters[target].x >= self.fighters[a].x { 1 } else { -1 }
             } else {
                 self.fighters[a].facing
             };
@@ -547,14 +603,14 @@ impl GameState {
             self.fighters[a].hitstop = mv.hitstop;
             let power = if self.fighters[a].finisher { 150 } else { 100 };
             // a hand out of a portal can't be blocked, only dodged
-            let can_block = blocks[1 - a] && base.portal.is_none() && !base.unblockable;
-            let blocked = self.apply_hit(1 - a, mv, dir, can_block, power);
+            let can_block = blocks[self.targets[a]] && base.portal.is_none() && !base.unblockable;
+            let blocked = self.apply_hit(self.targets[a], mv, dir, can_block, power);
             // too many blocked swings in a row and the attacker is stunned
             self.count_blocked_attack(a, base, blocked, dir);
             // the first window of a grab (it does no damage, a later hit does) holds them where they are,
             // even in the middle of a jump
-            if !blocked && base.hits > 1 && mv.damage == 0 && base.window(self.fighters[a].state_frame) == Some(0) && self.fighters[1 - a].state == FighterState::Hitstun {
-                let d = &mut self.fighters[1 - a];
+            if !blocked && base.hits > 1 && mv.damage == 0 && base.window(self.fighters[a].state_frame) == Some(0) && self.fighters[self.targets[a]].state == FighterState::Hitstun {
+                let d = &mut self.fighters[self.targets[a]];
                 d.held = true;
                 d.vx = 0;
                 d.vy = 0;
@@ -575,7 +631,7 @@ impl GameState {
                 self.fighters[a].plot_armour = base.plot_armour;
             }
             if mv.silence > 0 && !blocked {
-                self.fighters[1 - a].silenced = mv.silence;
+                self.fighters[target].silenced = mv.silence;
             }
             self.apply_pulls(a, mv, blocked);
             self.gain_meter(a, mv, mv.damage * power / 100, blocked, chars);
@@ -603,15 +659,15 @@ impl GameState {
 
     /// A fighter who just plunged to the floor hits everything in reach of the landing: the opponent,
     /// if they're low enough, and their goblins.
-    fn apply_slams(&mut self, inputs: [Input; 2]) {
-        for a in 0..2 {
+    fn apply_slams(&mut self, inputs: &[Input]) {
+        for a in 0..self.fighters.len() {
             if !self.fighters[a].slam_landed {
                 continue;
             }
             self.fighters[a].slam_landed = false;
             // (a floor smash deals its own damage; the plain ground pound the usual amount)
             let slam_damage = std::mem::replace(&mut self.fighters[a].slam_damage, Fighter::SLAM_DAMAGE);
-            let d = 1 - a;
+            let d = self.targets[a];
             let ax = self.fighters[a].x;
             let radius = Fighter::SLAM_RADIUS * PX;
             let foe = &self.fighters[d];
@@ -655,8 +711,8 @@ impl GameState {
 
     /// A move that sends the raven out does it when its startup ends (if the raven is home); the special
     /// spends the meter.
-    fn launch_ravens(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn launch_ravens(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack || self.ravens[owner].active {
                 continue;
@@ -684,8 +740,8 @@ impl GameState {
 
     /// Fly each raven along its script: the claw (out, one hit, home) or the storm (peck from the left, the
     /// right, the left, then above the owner to drop a rose, then home). A raven goes home when the opponent is beaten.
-    fn update_ravens(&mut self, chars: [&CharacterData; 2], inputs: [Input; 2]) {
-        for owner in 0..2 {
+    fn update_ravens(&mut self, chars: &[&CharacterData], inputs: &[Input]) {
+        for owner in 0..self.fighters.len() {
             let mut r = self.ravens[owner];
             if !r.active {
                 continue;
@@ -694,7 +750,7 @@ impl GameState {
                 self.ravens[owner] = Raven::idle();
                 continue;
             };
-            let (me, foe) = (&self.fighters[owner], &self.fighters[1 - owner]);
+            let (me, foe) = (&self.fighters[owner], &self.fighters[self.targets[owner]]);
             let speed = rd.speed * PX;
             let home = (me.x + me.facing * rd.home.0 * PX, me.y + rd.home.1 * PX);
             let home_step = match kind {
@@ -796,7 +852,7 @@ impl GameState {
             }
             if let Some(dir) = hit {
                 let mv = &chars[owner].moves[r.move_index];
-                let defender = 1 - owner;
+                let defender = self.targets[owner];
                 let blocked = self.can_block(defender, inputs[defender]);
                 let blocked = self.apply_hit(defender, mv, dir, blocked, r.power);
                 self.gain_meter(owner, mv, mv.damage * r.power / 100, blocked, chars);
@@ -838,8 +894,8 @@ impl GameState {
 
     /// A move with a `low_hitbox` picks high or low at random when it starts (from the frame and where
     /// everyone stands, so it's the same on every machine). The special spends the meter when the lash comes out.
-    fn start_lashes(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn start_lashes(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -859,7 +915,7 @@ impl GameState {
             } else if f.state_frame + 2 == mv.startup {
                 // just before the lash: it follows the enemy's height, most of the time (it goes under a jumper and over one who
                 // ducked, so those are no longer sure dodges)
-                let foe = &self.fighters[1 - owner];
+                let foe = &self.fighters[self.targets[owner]];
                 let counter = if foe.state == FighterState::Crouch { Some(true) } else if !foe.grounded() { Some(false) } else { None };
                 let mut h = (self.frame).wrapping_mul(2_246_822_519) ^ (foe.x as u32).wrapping_mul(668_265_263) ^ owner as u32;
                 h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
@@ -875,8 +931,8 @@ impl GameState {
     /// The portal special (see `MoveData::portal`): at `vanish` she is gone, the meter is spent and the far portal
     /// opens behind the opponent; when the startup ends she is moved there (still unseen) facing them, so the grab
     /// comes out of the far portal. If the grab misses she steps out when its window is over.
-    fn update_portals(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn update_portals(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             let portal = if f.state == FighterState::Attack { chars[owner].moves[f.attack].portal } else { None };
             let Some(pd) = portal else {
@@ -886,7 +942,7 @@ impl GameState {
                 continue;
             };
             let mv = &chars[owner].moves[f.attack];
-            let (frame, foe_x) = (f.state_frame, self.fighters[1 - owner].x);
+            let (frame, foe_x) = (f.state_frame, self.fighters[self.targets[owner]].x);
             let f = &mut self.fighters[owner];
             // while the far portal is open it drags the enemy in, so walking away from it is not enough
             let pulling = (pd.pull > 0 && frame > pd.aim_frame(mv.startup) && frame < mv.startup).then_some(f.portal_x).flatten();
@@ -896,7 +952,7 @@ impl GameState {
             }
             if frame == pd.aim_frame(mv.startup) {
                 let dir = if foe_x >= f.x { 1 } else { -1 };
-                let limit = Self::STAGE_HALF_WIDTH - Fighter::HALF_WIDTH;
+                let limit = self.stage_half_width - Fighter::HALF_WIDTH;
                 f.portal_x = Some((foe_x + dir * pd.gap * PX).clamp(-limit, limit));
             }
             if frame == mv.startup {
@@ -913,7 +969,7 @@ impl GameState {
                 f.hidden = false;
             }
             if let Some(portal_x) = pulling {
-                let foe = &mut self.fighters[1 - owner];
+                let foe = &mut self.fighters[self.targets[owner]];
                 if foe.state != FighterState::Ko {
                     // (stopping a few pixels short, well inside her reach)
                     let away = portal_x - foe.x;
@@ -927,11 +983,11 @@ impl GameState {
     }
 
     /// A bat turning back bursts into smoke that stuns the opponent if they are close.
-    fn apply_poofs(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn apply_poofs(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let (Some(bat), true) = (chars[owner].bat_form(), self.fighters[owner].poof) else { continue };
             let x = self.fighters[owner].x;
-            let foe = &mut self.fighters[1 - owner];
+            let foe = &mut self.fighters[self.targets[owner]];
             let hit = (foe.x - x).abs() <= bat.radius * PX && !foe.invulnerable() && foe.state != FighterState::Ko;
             if hit {
                 foe.start_stun(FighterState::Hitstun, bat.stun, 0);
@@ -948,7 +1004,7 @@ impl GameState {
         if !mv.pull_self && !mv.pull_foe {
             return;
         }
-        let (ax, dx) = (self.fighters[attacker].x, self.fighters[1 - attacker].x);
+        let (ax, dx) = (self.fighters[attacker].x, self.fighters[self.targets[attacker]].x);
         let travel = (ax - dx).abs() - mv.pull_gap * PX;
         if travel <= 0 {
             return;
@@ -959,7 +1015,7 @@ impl GameState {
             self.fighters[attacker].pull = towards_foe * amount;
         }
         if mv.pull_foe && !blocked {
-            self.fighters[1 - attacker].pull = -towards_foe * travel;
+            self.fighters[self.targets[attacker]].pull = -towards_foe * travel;
         }
     }
 
@@ -970,7 +1026,7 @@ impl GameState {
             return true;
         }
         // an attacker in a glitched area does half damage
-        let weakened = self.in_zone(1 - defender, super::data::ZoneKind::Glitch);
+        let weakened = self.in_zone(self.targets[defender], super::data::ZoneKind::Glitch);
         let d = &mut self.fighters[defender];
         d.hitstop = mv.hitstop;
         let push = dir * mv.knockback * PX;
@@ -1003,8 +1059,8 @@ impl GameState {
 
     /// Launch the next shot of any attack whose startup is over. A volley fires `volley_gap` frames apart;
     /// the special spends the meter with its first shot.
-    fn launch_projectiles(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn launch_projectiles(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             if self.fighters[owner].state != FighterState::Attack {
                 self.fighters[owner].lob_target = None;
                 continue;
@@ -1015,7 +1071,7 @@ impl GameState {
                 let mv = &chars[owner].moves[f.attack];
                 if let Some(p) = mv.projectile.as_ref().filter(|p| p.lob) {
                     if f.lob_target.is_none() && f.state_frame >= p.lock_frame {
-                        let target_x = self.fighters[1 - owner].x;
+                        let target_x = self.fighters[self.targets[owner]].x;
                         self.fighters[owner].lob_target = Some(target_x);
                         // a portal over the opponent opens where they stand
                         if p.over_target {
@@ -1037,7 +1093,7 @@ impl GameState {
             }
             let (mut x, mut y) = (f.x + f.facing * p.x * PX, f.y + p.y * PX);
             let (move_index, frames) = (f.attack, p.travel_frames.max(1) as i32);
-            let target = &self.fighters[1 - owner];
+            let target = &self.fighters[self.targets[owner]];
             let mut land_x = f.lob_target.unwrap_or(target.x);
             // each shot of a volley lands somewhere else near the locked spot
             if p.lob && p.spread > 0 {
@@ -1087,8 +1143,8 @@ impl GameState {
     /// A move that clears projectiles (the staff's shockwave) destroys every enemy projectile in its
     /// horizontal reach while it is active, whatever the height up to a little above the head, but
     /// not `melee` ones.
-    fn clear_projectiles(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn clear_projectiles(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -1101,14 +1157,14 @@ impl GameState {
             let (x0, x1) = if f.facing > 0 { (f.x + r.x * PX, f.x + (r.x + r.w) * PX) } else { (f.x - (r.x + r.w) * PX, f.x - r.x * PX) };
             let top = f.y + 100 * PX;
             let bottom = f.y - 10 * PX;
-            let others = chars[1 - owner];
+            let teams = &self.teams;
             let frame = self.frame;
             let mut gone = Vec::new();
             self.projectiles.retain(|p| {
-                if p.owner == owner {
+                if teams[p.owner] == teams[owner] {
                     return true;
                 }
-                let melee = others.moves[p.move_index].projectile.as_ref().is_some_and(|d| d.melee);
+                let melee = chars[p.owner].moves[p.move_index].projectile.as_ref().is_some_and(|d| d.melee);
                 let inside = p.x >= x0 && p.x <= x1 && p.y >= bottom && p.y <= top;
                 if inside && !melee {
                     gone.push((p.x, p.y, frame));
@@ -1138,8 +1194,8 @@ impl GameState {
     /// frames, for as long as the button stays down.
     /// A beam of light locks in where the opponent stands at its lock frame, and forgets it when the
     /// move is over.
-    fn lock_beams(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn lock_beams(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             let beam = (f.state == FighterState::Attack).then(|| chars[owner].moves[f.attack].beam).flatten();
             match beam {
@@ -1147,7 +1203,7 @@ impl GameState {
                 // start the moment the other ends) is forgotten, so this move locks on for itself and spends its meter
                 Some(b) if f.beam_lock.is_some() && f.state_frame < b.lock_frame => self.fighters[owner].beam_lock = None,
                 Some(b) if f.beam_lock.is_none() && f.state_frame >= b.lock_frame => {
-                    let x = self.fighters[1 - owner].x;
+                    let x = self.fighters[self.targets[owner]].x;
                     self.fighters[owner].beam_lock = Some(x);
                     // the special spends the meter when the beam locks in
                     if chars[owner].moves[self.fighters[owner].attack].button == super::data::Button::Special {
@@ -1160,8 +1216,8 @@ impl GameState {
         }
     }
 
-    fn fire_channels(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn fire_channels(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -1183,8 +1239,8 @@ impl GameState {
     }
 
     /// A curse move puts its curse on the opponent when its startup ends, spending the meter.
-    fn apply_curses(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn apply_curses(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -1192,10 +1248,10 @@ impl GameState {
             let mv = &chars[owner].moves[f.attack];
             let Some(c) = mv.curse else { continue };
             // a curse that rides on a projectile (the thrown hat) is put on when that lands
-            if mv.projectile.is_some() || f.state_frame != mv.startup + 1 || self.fighters[1 - owner].curse.is_some() {
+            if mv.projectile.is_some() || f.state_frame != mv.startup + 1 || self.fighters[self.targets[owner]].curse.is_some() {
                 continue;
             }
-            self.fighters[1 - owner].curse = Some(Curse {
+            self.fighters[self.targets[owner]].curse = Some(Curse {
                 owner,
                 left: true,
                 right: true,
@@ -1210,8 +1266,8 @@ impl GameState {
     }
 
     /// A summoning move brings out its minions when its startup ends, spending the meter.
-    fn summon_minions(&mut self, chars: [&CharacterData; 2]) {
-        for owner in 0..2 {
+    fn summon_minions(&mut self, chars: &[&CharacterData]) {
+        for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
             if f.state != FighterState::Attack {
                 continue;
@@ -1247,7 +1303,7 @@ impl GameState {
     }
 
     /// Minions swarm the opponent and bite on a timer; they leave when their time is up.
-    fn update_minions(&mut self, chars: [&CharacterData; 2], inputs: [Input; 2]) {
+    fn update_minions(&mut self, chars: &[&CharacterData], inputs: &[Input]) {
         let old = std::mem::take(&mut self.minions);
         // (the survivors go back into a list that already has room, instead of growing it from nothing every step)
         self.minions.reserve(old.len());
@@ -1261,7 +1317,7 @@ impl GameState {
                 continue;
             }
             let owner = &self.fighters[m.owner];
-            let foe = &self.fighters[1 - m.owner];
+            let foe = &self.fighters[self.targets[m.owner]];
             let _ = owner;
             let step = |from: i32, to: i32, speed: i32| from + (to - from).clamp(-speed * PX, speed * PX);
             if md.agent {
@@ -1281,8 +1337,8 @@ impl GameState {
                         m.bit = true;
                         m.timer = 0;
                         let dir = m.facing;
-                        let blocked = self.can_block(1 - m.owner, inputs[1 - m.owner]);
-                        self.apply_hit(1 - m.owner, mv, dir, blocked, 100);
+                        let blocked = self.can_block(self.targets[m.owner], inputs[self.targets[m.owner]]);
+                        self.apply_hit(self.targets[m.owner], mv, dir, blocked, 100);
                     }
                 }
             }
@@ -1293,8 +1349,8 @@ impl GameState {
     /// One step of an agent: it walks up to the opponent, dashes when it is far off, throws a pair of punches,
     /// and then either rolls away from an attack it sees coming or rolls through to the other side before it goes
     /// again. It has one hit point, so any hit takes it out (and it can't be touched mid-roll).
-    fn step_agent(&mut self, m: &mut Minion, md: crate::sim::MinionData, mv: &MoveData, inputs: [Input; 2]) {
-        let foe = &self.fighters[1 - m.owner];
+    fn step_agent(&mut self, m: &mut Minion, md: crate::sim::MinionData, mv: &MoveData, inputs: &[Input]) {
+        let foe = &self.fighters[self.targets[m.owner]];
         let toward = if foe.x >= m.x { 1 } else { -1 };
         let dist = (foe.x - m.x).abs();
         let reach = md.reach * PX;
@@ -1326,11 +1382,11 @@ impl GameState {
                 // two punches, 6 and 16 frames in
                 if (m.timer == 6 || m.timer == 16) && dist <= reach + 4 * PX && foe.y < 40 * PX && foe.state != FighterState::Ko && !foe.invulnerable() {
                     m.bit = true;
-                    let blocked = self.can_block(1 - m.owner, inputs[1 - m.owner]);
-                    self.apply_hit(1 - m.owner, mv, m.facing, blocked, 100);
+                    let blocked = self.can_block(self.targets[m.owner], inputs[self.targets[m.owner]]);
+                    self.apply_hit(self.targets[m.owner], mv, m.facing, blocked, 100);
                 }
                 if m.timer >= 28 {
-                    let foe = &self.fighters[1 - m.owner];
+                    let foe = &self.fighters[self.targets[m.owner]];
                     // after the pair: now and then slip away from an attack that's coming, or roll through to their other
                     // side; the rest of the time it just goes again
                     if m.age % 5 < 3 {
@@ -1358,7 +1414,7 @@ impl GameState {
     /// A hit on a cursed fighter removes the half of the curse on the attacker's side.
     fn mark_curse(&mut self, attacker: usize) {
         let ax = self.fighters[attacker].x;
-        let d = &mut self.fighters[1 - attacker];
+        let d = &mut self.fighters[self.targets[attacker]];
         let dx = d.x;
         if let Some(c) = d.curse.as_mut() {
             if c.owner == attacker && c.squeeze == 0 {
@@ -1373,7 +1429,7 @@ impl GameState {
 
     /// Age curses, squeeze finished ones shut and deal their damage, let old ones fade.
     fn update_curses(&mut self) {
-        for d in 0..2 {
+        for d in 0..self.fighters.len() {
             let Some(mut c) = self.fighters[d].curse else { continue };
             c.age += 1;
             if c.squeeze > 0 {
@@ -1386,7 +1442,7 @@ impl GameState {
                 let victim = &mut self.fighters[d];
                 victim.health -= c.damage;
                 victim.hitstop = 10;
-                let dir = if c.owner == 1 - d && self.fighters_x_of(c.owner) < self.fighters_x_of(d) { 1 } else { -1 };
+                let dir = if c.owner == self.targets[d] && self.fighters_x_of(c.owner) < self.fighters_x_of(d) { 1 } else { -1 };
                 let victim = &mut self.fighters[d];
                 if victim.health <= 0 {
                     victim.start_stun(FighterState::Ko, 0, dir * 6 * PX);
@@ -1431,7 +1487,7 @@ impl GameState {
             self.fighters[attacker].whip_boost = true;
         }
         if was_finisher && blocked {
-            let dir = if self.fighters[attacker].x <= self.fighters[1 - attacker].x { -1 } else { 1 };
+            let dir = if self.fighters[attacker].x <= self.fighters[self.targets[attacker]].x { -1 } else { 1 };
             let f = &mut self.fighters[attacker];
             f.finisher = false;
             f.combo = 0;
@@ -1442,7 +1498,7 @@ impl GameState {
     /// Fill a fighter's special meter for a hit they landed (half for a blocked one). Specials don't fill it, and neither
     /// does anything that lands while their own special is playing (a quill thrown just before it): the meter they
     /// just spent stays empty.
-    fn gain_meter(&mut self, owner: usize, mv: &MoveData, damage: i32, blocked: bool, chars: [&CharacterData; 2]) {
+    fn gain_meter(&mut self, owner: usize, mv: &MoveData, damage: i32, blocked: bool, chars: &[&CharacterData]) {
         let f = &self.fighters[owner];
         let in_special = f.state == FighterState::Attack && chars[owner].moves[f.attack].button == super::data::Button::Special;
         if mv.button == super::data::Button::Special || in_special {
@@ -1455,7 +1511,7 @@ impl GameState {
     }
 
     /// Fly projectiles forward: land on the opponent or fizzle out.
-    fn move_projectiles(&mut self, inputs: [Input; 2], chars: [&CharacterData; 2]) {
+    fn move_projectiles(&mut self, inputs: &[Input], chars: &[&CharacterData]) {
         let old = std::mem::take(&mut self.projectiles);
         self.projectiles.reserve(old.len());
         for mut p in old {
@@ -1465,7 +1521,7 @@ impl GameState {
             // a heat-seeking missile turns towards the opponent's chest before it moves
             let mut close = false;
             if data.homing || data.steer {
-                let foe = &self.fighters[1 - owner];
+                let foe = &self.fighters[self.targets[owner]];
                 let (dx, dy) = ((foe.x - p.x) as i64, (foe.y + 30 * PX - p.y) as i64);
                 let dist = (Self::isqrt((dx * dx + dy * dy) as u64) as i64).max(1);
                 let speed = Self::missile_speed(data) as i64;
@@ -1481,7 +1537,7 @@ impl GameState {
             p.y += p.vy;
             p.age += 1;
 
-            let defender = 1 - owner;
+            let defender = self.targets[owner];
             let hurt = if data.pierces_dodges { self.undodged_hurtbox(defender) } else { self.hurtbox(defender) };
             // a lob comes down and splashes on the ground around where it lands
             if data.lob {
@@ -1502,7 +1558,7 @@ impl GameState {
             let (hw, hh) = (data.size.0 * PX / 2, data.size.1 * PX / 2);
             let hit = close || (p.x - hw < hurt[2] && hurt[0] < p.x + hw && p.y - hh < hurt[3] && hurt[1] < p.y + hh);
             let floor = data.aim_ground && p.y <= 0;
-            let gone = floor || p.age >= data.lifetime || p.x.abs() > Self::STAGE_HALF_WIDTH + 80 * PX || p.y < -10 * PX;
+            let gone = floor || p.age >= data.lifetime || p.x.abs() > self.stage_half_width + 80 * PX || p.y < -10 * PX;
 
             // a thrown drink spills where it lands, or where it gave out
             if hit || gone {
@@ -1566,7 +1622,7 @@ impl GameState {
     }
 
     fn clamp_to_stage(&mut self) {
-        let limit = Self::STAGE_HALF_WIDTH - Fighter::HALF_WIDTH;
+        let limit = self.stage_half_width - Fighter::HALF_WIDTH;
         for f in &mut self.fighters {
             f.x = f.x.clamp(-limit, limit);
         }
@@ -1582,7 +1638,7 @@ impl GameState {
     /// close (so their attacks go at it); everyone else keeps their facing.
     fn face_each_other(&mut self) {
         let toward = |from: i32, to: i32| if to > from { 1 } else { -1 };
-        for i in 0..2 {
+        for i in 0..self.fighters.len() {
             if !self.fighters[i].is_neutral() {
                 continue;
             }
@@ -1590,15 +1646,16 @@ impl GameState {
             let agent = self
                 .minions
                 .iter()
-                .filter(|m| m.owner != i && m.health > 0 && m.x != x && (m.x - x).abs() <= if m.agent { Self::AGENT_ATTENTION } else { Self::GOBLIN_ATTENTION })
+                .filter(|m| self.teams[m.owner] != self.teams[i] && m.health > 0 && m.x != x && (m.x - x).abs() <= if m.agent { Self::AGENT_ATTENTION } else { Self::GOBLIN_ATTENTION })
                 .min_by_key(|m| (m.x - x).abs())
                 .map(|m| m.x);
-            let target = agent.unwrap_or(self.fighters[1 - i].x);
+            let target = agent.unwrap_or(self.fighters[self.targets[i]].x);
             if target != x {
                 self.fighters[i].facing = toward(x, target);
             }
         }
     }
+
 }
 
 impl Default for GameState {
@@ -1653,6 +1710,96 @@ mod tests {
         s.fighters[0].x = -18 * PX;
         s.fighters[1].x = 18 * PX;
         s
+    }
+
+    #[test]
+    fn airborne_platforms_support_landing_jumping_and_walking_off() {
+        let mut s = GameState::team_match();
+        let c = ayz();
+        let p = s.platforms[0];
+        s.fighters[0].x = (p.left + p.right) / 2;
+        s.fighters[0].y = p.height + 2 * PX;
+        s.fighters[0].vy = -3 * PX;
+        s.fighters[0].state = FighterState::Jump;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert_eq!(s.fighters[0].y, p.height);
+        assert!(s.fighters[0].grounded());
+        s.step([Input(Input::UP), Input::default(), Input::default(), Input::default()], [&c; 4]);
+        assert!(s.fighters[0].y > p.height);
+        s.fighters[0].x = p.right + 20 * PX;
+        s.fighters[0].y = p.height;
+        s.fighters[0].vy = 0;
+        s.fighters[0].state = FighterState::Idle;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert!(s.fighters[0].y < p.height);
+        // Rising through the underside must not snap the fighter onto the ledge.
+        s.fighters[0].x = (p.left + p.right) / 2;
+        s.fighters[0].y = p.height - 10 * PX;
+        s.fighters[0].vy = 3 * PX;
+        s.fighters[0].state = FighterState::Jump;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert!(s.fighters[0].y < p.height);
+        assert!(!s.fighters[0].grounded());
+    }
+
+    #[test]
+    fn team_round_requires_both_enemies_to_be_knocked_out() {
+        let mut s = GameState::team_match();
+        let c = ayz();
+        s.fighters[1].health = 0;
+        s.fighters[1].state = FighterState::Ko;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert_eq!(s.phase, Phase::Fighting);
+        assert_eq!(s.target(0), 3);
+        s.fighters[3].health = 0;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert!(matches!(s.phase, Phase::RoundEnd(_)));
+        assert_eq!(s.wins, [1, 0]);
+        for _ in 0..GameState::ROUND_END_FRAMES { s.step([Input::default(); 4], [&c; 4]); }
+        assert_eq!(s.fighters.len(), 4);
+        assert!(s.fighters.iter().all(|f| f.health == f.max_health));
+    }
+
+    #[test]
+    fn four_fighter_specials_are_deterministic_and_never_target_teammates() {
+        let chars: Vec<_> = [
+            include_str!("../../assets/characters/ayz.ron"),
+            include_str!("../../assets/characters/cowboy.ron"),
+            include_str!("../../assets/characters/gray_persona.ron"),
+            include_str!("../../assets/characters/anaran.ron"),
+            include_str!("../../assets/characters/scribe.ron"),
+            include_str!("../../assets/characters/junkhead.ron"),
+            include_str!("../../assets/characters/evilayz.ron"),
+            include_str!("../../assets/characters/katmata.ron"),
+        ].iter().map(|text| CharacterData::from_ron(text).unwrap()).collect();
+        for offset in 0..chars.len() {
+            let data = std::array::from_fn::<_, 4, _>(|i| &chars[(i + offset) % chars.len()]);
+            let mut a = GameState::team_match();
+            let mut b = a.clone();
+            let mut seed = 42;
+            for _ in 0..1500 {
+                let inputs = std::array::from_fn(|_| Input(lcg(&mut seed) & 0x3ff));
+                a.step(inputs, data);
+                b.step(inputs, data);
+                for i in 0..4 { assert_ne!(a.teams[i], a.teams[a.target(i)]); }
+            }
+            assert_eq!(hash(&a), hash(&b));
+        }
+    }
+
+    #[test]
+    fn nearest_enemy_ignores_teammates_and_knocked_out_fighters() {
+        let mut fighters = [Fighter::new(0, 1), Fighter::new(10, 1), Fighter::new(30, -1), Fighter::new(20, -1)];
+        let teams = [0, 0, 1, 1];
+        assert_eq!(nearest_enemy(&fighters, &teams, 0), Some(3));
+        fighters[3].health = 0;
+        assert_eq!(nearest_enemy(&fighters, &teams, 0), Some(2));
+        fighters[2].x = 20;
+        fighters[3].health = 1;
+        assert_eq!(nearest_enemy(&fighters, &teams, 0), Some(2));
+        fighters[2].health = 0;
+        fighters[3].health = 0;
+        assert_eq!(nearest_enemy(&fighters, &teams, 0), None);
     }
 
     #[test]
@@ -4923,4 +5070,3 @@ mod tests {
         assert_eq!(heavy.projectile.as_ref().unwrap().image_name(), "batspray");
     }
 }
-

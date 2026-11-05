@@ -67,6 +67,8 @@ pub enum AppState {
 pub enum Mode {
     #[default]
     VsCpu,
+    LocalVersus,
+    LocalTeams,
     Online,
 }
 
@@ -81,7 +83,7 @@ pub struct Stages(pub Vec<StageData>);
 /// What was picked in the menus.
 #[derive(Resource, Default)]
 pub struct Selection {
-    pub chars: [usize; 2],
+    pub chars: [usize; 4],
     pub stage: usize,
 }
 
@@ -254,6 +256,50 @@ fn dev_screenshot(
     }
 }
 
+/// Controllers keep their player slots when another controller disconnects.
+#[derive(Resource, Default)]
+struct ControllerSlots([Option<Entity>; 4]);
+
+fn assign_controllers(pads: Query<Entity, With<Gamepad>>, mut slots: ResMut<ControllerSlots>) {
+    for slot in &mut slots.0 {
+        if slot.is_some_and(|entity| pads.get(entity).is_err()) { *slot = None; }
+    }
+    let mut connected: Vec<_> = pads.iter().collect();
+    connected.sort_by_key(|entity| entity.to_bits());
+    for entity in connected {
+        if slots.0.contains(&Some(entity)) { continue; }
+        if let Some(slot) = slots.0.iter_mut().find(|slot| slot.is_none()) { *slot = Some(entity); }
+    }
+}
+
+#[derive(Resource, Default)]
+struct MenuInput(ButtonInput<KeyCode>);
+
+impl std::ops::Deref for MenuInput {
+    type Target = ButtonInput<KeyCode>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut input: ResMut<MenuInput>, mut previous: Local<[bool; 4]>) {
+    use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
+    input.0 = keys.clone();
+    let mut directions = [false; 4];
+    for pad in &pads {
+        let x = pad.get(A::LeftStickX).unwrap_or(0.0);
+        let y = pad.get(A::LeftStickY).unwrap_or(0.0);
+        directions[0] |= pad.pressed(B::DPadUp) || y > 0.5;
+        directions[1] |= pad.pressed(B::DPadDown) || y < -0.5;
+        directions[2] |= pad.pressed(B::DPadLeft) || x < -0.5;
+        directions[3] |= pad.pressed(B::DPadRight) || x > 0.5;
+        if pad.just_pressed(B::South) || pad.just_pressed(B::Start) { input.0.press(KeyCode::Enter); }
+        if pad.just_pressed(B::East) { input.0.press(KeyCode::Escape); }
+    }
+    for (i, key) in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight].into_iter().enumerate() {
+        if directions[i] && !previous[i] { input.0.press(key); }
+    }
+    *previous = directions;
+}
+
 fn main() {
     // on a PC where Vulkan only fails because of optional driver layers, start again with them off (see `vulkan.rs`)
     vulkan::sort_out();
@@ -305,6 +351,10 @@ fn main() {
         }))
         .insert_resource(Stages(load_dir("stages", StageData::from_ron)))
         .insert_resource(DebugView(dev.debug))
+        .init_resource::<MenuInput>()
+        .init_resource::<ControllerSlots>()
+        .add_systems(PreUpdate, assign_controllers.after(bevy::input::InputSystems))
+        .add_systems(PreUpdate, controller_menu_input.after(bevy::input::InputSystems))
         .init_resource::<Mode>()
         .init_resource::<Selection>()
         .init_resource::<Sim>()
@@ -319,7 +369,7 @@ fn main() {
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
             rings.0.clear();
             clear.0 = MENU_BACKGROUND;
@@ -331,7 +381,7 @@ fn main() {
         .add_systems(
             Update,
             (
-                render::pose_bodies,
+                (render::pose_bodies, render::animate_team_markers),
                 render::animate_body,
                 render::animate_crescent,
                 render::animate_stars,
@@ -367,7 +417,7 @@ fn main() {
     if dev.fight {
         // keep a bad index from crashing
         let last = app.world().resource::<Roster>().0.len() - 1;
-        app.insert_resource(Selection { chars: dev.picks.map(|p| p.min(last)), stage: 0 });
+        app.insert_resource(Selection { chars: [dev.picks[0].min(last), dev.picks[1].min(last), 0, 0], stage: 0 });
         app.insert_state(AppState::Fight);
     } else if dev.online {
         app.insert_resource(Mode::Online);
@@ -420,7 +470,7 @@ fn spawn_fight(
         names.0 = [settings.username.clone(), String::new()];
     }
     // (the fighters' skills are shown in the character select now, so the match starts with the countdown)
-    *sim = fresh_sim(&roster, &selection, false);
+    *sim = fresh_sim(&roster, &selection, *mode, false);
     *pause = menus::Pause::Closed;
     surrender.0 = false;
     if dev.spread {
@@ -438,20 +488,21 @@ fn spawn_fight(
     commands
         .spawn((HudRoot, scoped.clone(), Transform::default(), Visibility::default()))
         .with_children(|hud| {
-            for side in 0..2usize {
-                let dir = if side == 0 { -1.0 } else { 1.0 };
+            for side in 0..sim.0.fighters.len() {
+                let dir = if side % 2 == 0 { -1.0 } else { 1.0 };
                 let mid = dir * (BAR_EDGE - BAR_W / 2.0);
+                let bar_y = BAR_Y - (side / 2) as f32 * 36.0;
                 hud.spawn((
                     Sprite::from_color(Color::srgb(0.15, 0.05, 0.05), Vec2::new(BAR_W + 2.0, BAR_H + 2.0)),
-                    Transform::from_xyz(mid, BAR_Y, 10.0),
+                    Transform::from_xyz(mid, bar_y, 10.0),
                 ));
                 hud.spawn((
                     HealthBar(side),
                     Sprite::from_color(Color::srgb(0.95, 0.8, 0.2), Vec2::new(BAR_W, BAR_H)),
-                    Transform::from_xyz(mid, BAR_Y, 10.1),
+                    Transform::from_xyz(mid, bar_y, 10.1),
                 ));
                 // special meter: a thin bar under the health bar
-                let special_y = BAR_Y - BAR_H / 2.0 - 4.0;
+                let special_y = bar_y - BAR_H / 2.0 - 4.0;
                 hud.spawn((
                     Sprite::from_color(Color::srgb(0.1, 0.1, 0.16), Vec2::new(BAR_W + 2.0, 5.0)),
                     Transform::from_xyz(mid, special_y, 10.0),
@@ -467,14 +518,14 @@ fn spawn_fight(
                     hud.spawn((
                         RoundPip(side, n),
                         Sprite::from_color(Color::srgb(0.25, 0.25, 0.3), Vec2::new(6.0, 6.0)),
-                        Transform::from_xyz(x, BAR_Y - 17.0, 10.1),
+                        Transform::from_xyz(x, bar_y - 17.0, 10.1),
                     ));
                 }
                 // the username, in italics, then the fighter's name; long names sit further in so they stay on screen
                 let character = &roster.0[selection.chars[side]];
-                let who = names.0[side].clone();
+                let who = names.0.get(side).cloned().unwrap_or_default();
                 let width = character.name.len() + if who.is_empty() { 0 } else { who.len() + 1 };
-                let at = Transform::from_xyz(dir * (BAR_EDGE - 6.0 - width as f32 * 2.8), BAR_Y - 18.0, 10.2);
+                let at = Transform::from_xyz(dir * (BAR_EDGE - 6.0 - width as f32 * 2.8), bar_y - 18.0, 10.2);
                 if who.is_empty() {
                     hud.spawn((Text2d::new(character.name.clone()), crate::pixel_font(10.0), TextColor(rgb(character.color)), at));
                 } else {
@@ -528,10 +579,19 @@ fn spawn_fight(
         }
     }
 
+    for ledge in &sim.0.platforms {
+        let width = (ledge.right - ledge.left) as f32 / PX as f32;
+        let center = (ledge.right + ledge.left) as f32 / (2 * PX) as f32;
+        let top = GROUND_Y + ledge.height as f32 / PX as f32;
+        for (height, offset, color) in [(9.0, -5.5, Color::srgb(0.18, 0.23, 0.28)), (3.0, -1.5, Color::srgb(0.65, 0.76, 0.79))] {
+            commands.spawn((scoped.clone(), Sprite::from_color(color, Vec2::new(width, height)), Transform::from_xyz(center, top + offset, 0.5)));
+        }
+    }
+
     // floor: a repeated tile or two alternating colours, two rows deep so it still reaches the bottom when zoomed out
-    let stage_w = (GameState::STAGE_HALF_WIDTH * 2 / PX) as f32;
+    let stage_w = (sim.0.stage_half_width * 2 / PX) as f32;
     let half = stage_w / 2.0;
-    for row in 0..2 {
+    for row in 0..if sim.0.fighters.len() == 4 { 4 } else { 2 } {
         let mut x = -half + 16.0;
         let mut n = row;
         while x < half {
@@ -554,7 +614,7 @@ fn spawn_fight(
     }
 
     let mut handles = render::FrameHandles::default();
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let c = &roster.0[selection.chars[i]];
         // the crescent appears where the summon's projectile starts
         let lob = c.moves.iter().filter_map(|m| m.projectile.as_ref()).find(|p| p.lob);
@@ -608,7 +668,7 @@ fn spawn_fight(
         let frames = t2f::anim::frames_for(c);
         render::spawn_fighter(&mut commands, &asset_server, &assets_dir(), &mut handles, i, c.sprites.as_deref().unwrap_or(&c.name), rgb(c.color), summon, &effects, &frames, c.special_mark.is_some(), c.whip || c.moves.iter().any(|m| m.rope), c.raven.is_some());
     }
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let c = &roster.0[selection.chars[i]];
         if c.moves.iter().any(|m| m.portal.is_some()) {
             render::spawn_portals(&mut commands, &asset_server, i, c.sprites.as_deref().unwrap_or(&c.name));
@@ -621,10 +681,32 @@ fn spawn_fight(
     commands.insert_resource(handles);
 }
 
+fn controller_fight_input(pad: &Gamepad) -> t2f::sim::Input {
+    let mut input = t2f::sim::Input::default();
+        use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
+        use t2f::sim::Input;
+        let x = pad.get(A::LeftStickX).unwrap_or(0.0);
+        let y = pad.get(A::LeftStickY).unwrap_or(0.0);
+        for (pressed, flag) in [
+            (pad.pressed(B::DPadLeft) || x < -0.5, Input::LEFT),
+            (pad.pressed(B::DPadRight) || x > 0.5, Input::RIGHT),
+            (pad.pressed(B::DPadUp) || y > 0.5, Input::UP),
+            (pad.pressed(B::DPadDown) || y < -0.5, Input::DOWN),
+            (pad.pressed(B::West), Input::LIGHT),
+            (pad.pressed(B::North), Input::HEAVY),
+            (pad.pressed(B::East), Input::SPECIAL),
+            (pad.pressed(B::South), Input::BLOCK),
+            (pad.pressed(B::LeftTrigger), Input::ROLL_LEFT),
+            (pad.pressed(B::RightTrigger), Input::ROLL_RIGHT),
+        ] { if pressed { input.0 |= flag; } }
+    input
+}
+
 fn step_sim(
     mut sim: ResMut<Sim>,
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<settings::Settings>,
+    (gamepads, slots): (Query<&Gamepad>, Res<ControllerSlots>),
     roster: Res<Roster>,
     sel: Res<Selection>,
     dev: Res<DevOptions>,
@@ -636,14 +718,32 @@ fn step_sim(
     ready_press: ResMut<briefing::ReadyPress>,
     mut brain: Local<Brain>,
     mut commands: Commands,
-    pause: Res<menus::Pause>,
-    mut surrender: ResMut<menus::Surrendering>,
+    (pause, mut surrender): (Res<menus::Pause>, ResMut<menus::Surrendering>),
 ) {
+    if *mode == Mode::LocalTeams {
+        if sim.0.phase == Phase::MatchOver { surrender.0 = false; }
+        if pause.open() && !surrender.0 { return; }
+        let mut inputs = [t2f::sim::Input::default(); 4];
+        inputs[0] = settings.read_input(&keys);
+        if surrender.0 { inputs[0].0 |= Input::SURRENDER; }
+        // Keyboard plus three pads, or four pads; first pad remains player 2.
+        for (slot, player) in [1, 2, 3, 0].into_iter().enumerate() {
+            if let Some(pad) = slots.0[slot].and_then(|entity| gamepads.get(entity).ok()) { inputs[player].0 |= controller_fight_input(pad).0; }
+        }
+        sim.0.step(inputs, sel.chars.map(|i| &roster.0[i]));
+        return;
+    }
     // the keys set in Options > Controls; player 2 is the CPU. With the pause menu open you are away: the other
     // side is told, and your buttons do nothing
     let paused = pause.open();
     let mut player = if paused { Input(Input::AWAY) } else { settings.read_input(&keys) };
     if !paused {
+    // In local play the keyboard belongs to player 1 and the first controller
+    // belongs to player 2. A second controller can also control player 1.
+    let player_pad = if *mode == Mode::LocalVersus { 1 } else { 0 };
+    if let Some(pad) = slots.0[player_pad].and_then(|entity| gamepads.get(entity).ok()) {
+        player.0 |= controller_fight_input(pad).0;
+    }
         player.0 |= dev.hold;
     }
     // a surrender is sent until the match is over (online, an input only counts on a frame the session advances)
@@ -677,7 +777,8 @@ fn step_sim(
     if briefing {
         cpu.0 |= Input::READY;
     }
-    let inputs = [player, cpu];
+    let opponent = if *mode == Mode::LocalVersus { slots.0[0].and_then(|e| gamepads.get(e).ok()).map(controller_fight_input).unwrap_or_default() } else { cpu };
+    let inputs = [player, opponent];
     sim.0.step(inputs, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
 }
 
@@ -702,8 +803,9 @@ fn follow_camera(
     images: Res<Assets<Image>>,
     mut layers: Query<(&ParallaxLayer, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<HudRoot>)>,
 ) {
-    let (a, b) = (sim.0.fighters[0].x as f32 / PX as f32, sim.0.fighters[1].x as f32 / PX as f32);
-    let map_w = (GameState::STAGE_HALF_WIDTH * 2 / PX) as f32;
+    let a = sim.0.fighters.iter().map(|f| f.x).min().unwrap_or(0) as f32 / PX as f32;
+    let b = sim.0.fighters.iter().map(|f| f.x).max().unwrap_or(0) as f32 / PX as f32;
+    let map_w = (sim.0.stage_half_width * 2 / PX) as f32;
     // the camera shows at least VIEW_W x VIEW_H, so a window wider than 16:9 shows more than `width`
     // across; `stretch` is how much, and the zoom is held back so the view never outgrows the map
     let aspect = if window.height() > 0.0 { window.width() / window.height() } else { VIEW_W / VIEW_H };
@@ -768,7 +870,7 @@ fn sync_hud(
     for (SpecialBar(side), mut sprite, mut tf) in &mut specials {
         let frac = s.fighters[*side].meter as f32 / Fighter::METER_MAX as f32;
         let w = BAR_W * frac.clamp(0.0, 1.0);
-        let dir = if *side == 0 { -1.0 } else { 1.0 };
+        let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
         sprite.custom_size = Some(Vec2::new(w, 3.0));
         tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
         // purple while filling, pulsing gold when ready
@@ -782,13 +884,13 @@ fn sync_hud(
     for (HealthBar(side), mut sprite, mut tf) in &mut bars {
         let frac = s.fighters[*side].health.max(0) as f32 / s.fighters[*side].max_health.max(1) as f32;
         let w = BAR_W * frac;
-        let dir = if *side == 0 { -1.0 } else { 1.0 };
+        let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
         sprite.custom_size = Some(Vec2::new(w, BAR_H));
         // bars drain from the centre outwards
         tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
     }
     for (RoundPip(side, n), mut sprite) in &mut pips {
-        let won = s.wins[*side] > *n;
+        let won = s.wins[s.teams[*side] as usize] > *n;
         sprite.color = if won { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.25, 0.25, 0.3) };
     }
     // texts are only written when they change: any write makes Bevy lay the text out again
@@ -807,6 +909,7 @@ fn sync_hud(
             if s.fighters.iter().any(|f| f.health <= 0) { "K.O.".into() } else { "Time!".into() }
         }
         Phase::MatchOver => match s.match_winner() {
+            Some(w) if s.fighters.len() == 4 => format!("Team {} wins!", w + 1),
             Some(w) => format!("{} wins!", name(w)),
             None => "Draw".into(),
         },
@@ -832,7 +935,7 @@ fn draw_debug(sim: Res<Sim>, roster: Res<Roster>, sel: Res<Selection>, debug: Re
         let (x0, y0, x1, y1) = (b[0] as f32 / PX as f32, b[1] as f32 / PX as f32, b[2] as f32 / PX as f32, b[3] as f32 / PX as f32);
         (Vec2::new((x0 + x1) / 2.0, GROUND_Y + (y0 + y1) / 2.0), Vec2::new(x1 - x0, y1 - y0))
     };
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let (c, size) = to_rect(sim.0.hurtbox(i));
         gizmos.rect_2d(Isometry2d::from_translation(c), size, Color::srgb(0.2, 1.0, 0.3));
         if let Some(h) = sim.0.hitbox(i, &roster.0[sel.chars[i]]) {
@@ -849,7 +952,7 @@ fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut debug: ResMut<DebugView>) {
 }
 
 fn restart_match(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: Res<MenuInput>,
     mut sim: ResMut<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
@@ -857,19 +960,25 @@ fn restart_match(
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
-    if menus::confirm_pressed(&keys) && sim.0.phase == Phase::MatchOver {
+    if menus::confirm_pressed(&input.0) && sim.0.phase == Phase::MatchOver {
         if *mode == Mode::Online {
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
             next.set(AppState::Online);
         } else {
-            *sim = fresh_sim(&roster, &sel, false);
+            *sim = fresh_sim(&roster, &sel, *mode, false);
         }
     }
 }
 
 /// New match; each fighter starts with their character's health.
-fn fresh_sim(roster: &Roster, sel: &Selection, briefing: bool) -> Sim {
+fn fresh_sim(roster: &Roster, sel: &Selection, mode: Mode, briefing: bool) -> Sim {
+    if mode == Mode::LocalTeams {
+        let mut state = GameState::team_match();
+        state.phase = Phase::Countdown(0);
+        state.set_health(sel.chars.map(|i| roster.0[i].health.unwrap_or(Fighter::MAX_HEALTH)));
+        return Sim(state);
+    }
     let mut sim = Sim::default();
     // (without the skills screen the match starts with the countdown)
     sim.0.phase = if briefing { Phase::Briefing(0) } else { Phase::Countdown(0) };
@@ -878,8 +987,8 @@ fn fresh_sim(roster: &Roster, sel: &Selection, briefing: bool) -> Sim {
 }
 
 /// Esc leaves a fight that is over (or not begun); in one that is on it opens the pause menu (see `menus::Pause`).
-fn leave_fight(keys: Res<ButtonInput<KeyCode>>, sim: Res<Sim>, pause: Res<menus::Pause>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
-    if keys.just_pressed(KeyCode::Escape) && !pause.open() && matches!(sim.0.phase, Phase::MatchOver | Phase::Briefing(_)) {
+fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
+    if keys.0.just_pressed(KeyCode::Escape) && !pause.open() && matches!(sim.0.phase, Phase::MatchOver | Phase::Briefing(_)) {
         commands.remove_resource::<online::NetSession>();
         next.set(AppState::Title);
     }

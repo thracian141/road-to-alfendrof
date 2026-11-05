@@ -44,10 +44,10 @@ pub struct Pop {
 
 #[derive(Default)]
 pub struct Seen {
-    fighters: [Option<Snap>; 2],
-    ready: [bool; 2],
+    fighters: [Option<Snap>; 4],
+    ready: [bool; 4],
     /// Each fighter's curse last tick: (left half there, right half there, squeezing).
-    curse: [Option<(bool, bool, bool)>; 2],
+    curse: [Option<(bool, bool, bool)>; 4],
     /// Lobs seen last tick: (owner, landing spot in pixels, splash radius in pixels).
     lobs: Vec<(usize, i32, i32)>,
     /// The last frame whose destroyed projectiles got a puff.
@@ -154,11 +154,11 @@ pub fn emit(
         seen.seed = 12345;
     }
 
-    for i in 0..2 {
+    for i in 0..s.fighters.len() {
         let f = &s.fighters[i];
         let data = &roster.0[sel.chars[i]];
         let feet = Vec2::new((f.x / PX) as f32, GROUND_Y + (f.y / PX) as f32);
-        let towards = if s.fighters[1 - i].x >= f.x { 1.0 } else { -1.0 };
+        let towards = if s.fighters[s.target(i)].x >= f.x { 1.0 } else { -1.0 };
         if let Some(prev) = seen.fighters[i] {
             // futility lands: a blue burst round the head
             if f.futile > 0 && !prev.futile {
@@ -182,7 +182,7 @@ pub fn emit(
             }
             // a bite that heals: blood flies out of the victim towards the biter
             if f.health > prev.health && f.state == FighterState::Attack && data.moves[f.attack.min(data.moves.len() - 1)].heal_pct > 0 {
-                let o = &s.fighters[1 - i];
+                let o = &s.fighters[s.target(i)];
                 let from = Vec2::new((o.x / PX) as f32, GROUND_Y + (o.y / PX) as f32 + 38.0);
                 let blood = [Color::srgb(0.75, 0.04, 0.06), Color::srgb(0.5, 0.0, 0.03), Color::srgb(0.95, 0.15, 0.15)];
                 for k in 0..18 {

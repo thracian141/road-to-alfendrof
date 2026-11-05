@@ -39,6 +39,7 @@ bevy = { version = "0.20", default-features = false, features = [
     "default_font",
     "2d_bevy_render",
     "bevy_audio",
+    "bevy_gilrs",
     "wav", # the sound effects in assets/sfx
 ] }
 ggrs = { version = "0.13", features = ["sync-send"] }

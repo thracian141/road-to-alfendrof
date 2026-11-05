@@ -148,13 +148,13 @@ struct Voice {
     /// Who the next `voice_` sound belongs to, and until which frame each character's voice lines are protected
     /// (a long cry started with `MoveSfx::voice_lock`): other lines from them stay quiet until then.
     speaker: usize,
-    locks: [u32; 2],
+    locks: [u32; 4],
     /// How long (frames) the variant of each `voice_` group that played last lasts: the group isn't started again
     /// before it is over.
     last_len: HashMap<String, u32>,
     /// Each character's attack cries now playing (see `CharacterVoice::attack_voice_channel`): the move they belong to,
     /// their name, the frame they end and the sound itself, so a cry of another move can cut them off.
-    attack: [Vec<(usize, String, u32, Entity)>; 2],
+    attack: [Vec<(usize, String, u32, Entity)>; 4],
 }
 
 impl Voice {
@@ -237,7 +237,7 @@ type ShotId = (usize, usize, u32);
 #[derive(Resource, Default)]
 struct Memory {
     voice: Voice,
-    fighters: [Option<Snap>; 2],
+    fighters: [Option<Snap>; 4],
     shots: Vec<ShotId>,
     /// (owner, slot, summoned on frame) of every minion and whether it had bitten.
     minions: Vec<(usize, u32, u32, bool)>,
@@ -326,7 +326,7 @@ fn play_fight_sounds(
     });
 
     let before = *fighters;
-    for i in 0..2 {
+    for i in 0..s.fighters.len() {
         let f = &s.fighters[i];
         let own = &roster.0[sel.chars[i]].voice;
         voice.speaker = i;
@@ -365,7 +365,7 @@ fn play_fight_sounds(
         if let Some(prev) = before[i] {
             let entered = |state: FighterState| now.state == state && (prev.state != state || now.state_frame < prev.state_frame);
             let lost = prev.health - now.health;
-            let foe = 1 - i;
+            let foe = s.target(i);
 
             // being hit or blocking: which move did it? a melee swing that connected, a shot that ended, a bite
             let hurt = entered(FighterState::Hitstun) || entered(FighterState::Blockstun) || lost > 0;
