@@ -891,132 +891,115 @@ pub fn animate_bubbles(
 /// silenced you, the raven is away, or the special meter isn't full) is greyed out with the time left;
 /// the special fills up from the bottom as its meter charges, and glows when it's ready.
 #[derive(Component)]
-pub struct SkillIcon(pub usize);
+pub struct SkillIcon;
+#[derive(Clone, Copy)]
+enum SkillRole { Icon, Shade, Glow, Prompt }
 #[derive(Component)]
-pub struct SkillShade(pub usize);
+pub struct SkillPiece { player: usize, slot: usize, y: f32, role: SkillRole }
 #[derive(Component)]
-pub struct SkillTimer(pub usize);
-#[derive(Component)]
-pub struct SkillGlow(pub usize);
-
+pub struct SkillText { player: usize, slot: usize, timer: bool }
 const SKILL_SIZE: f32 = 24.0;
-/// Centres of the three icons (the bar is part of the HUD, which is laid out in view units).
-const SKILL_X: [f32; 3] = [118.0, 146.0, 174.0];
-const SKILL_Y: f32 = -91.0;
 
-pub fn spawn_skill_bar(
-    mut commands: Commands,
-    hud: Single<Entity, With<crate::HudRoot>>,
-    asset_server: Res<AssetServer>,
-    settings: Res<crate::settings::Settings>,
-) {
-    use t2f::sim::Input;
-    let keys = [Input::LIGHT, Input::HEAVY, Input::SPECIAL].map(|flag| crate::settings::key_name(settings.key(flag)));
+fn ps_controller(vendor: Option<u16>, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    vendor == Some(0x054c) || ["dualsense", "dualshock", "playstation", "sony", "ps4", "ps5"].iter().any(|s| name.contains(s))
+}
+
+pub fn spawn_skill_bar(mut commands: Commands, hud: Single<Entity, With<crate::HudRoot>>, assets: Res<AssetServer>, mode: Res<crate::Mode>, roster: Res<Roster>, sel: Res<Selection>, net: Option<Res<crate::online::NetSession>>) {
+    let count = match *mode { crate::Mode::LocalVersus => 2, crate::Mode::LocalTeams => 4, _ => 1 };
     commands.entity(*hud).with_children(|h| {
-        for (k, key) in keys.into_iter().enumerate() {
-            // the badge grows with the key's name ("Space"), from the icon's left edge
-            let badge_w = key.chars().count() as f32 * 4.0 + 4.0;
-            let badge_x = SKILL_X[k] - SKILL_SIZE / 2.0 + 1.0 + badge_w / 2.0;
-            let (x, y) = (SKILL_X[k], SKILL_Y);
-            h.spawn((SkillGlow(k), Sprite::from_color(Color::srgba(1.0, 0.85, 0.3, 0.0), Vec2::splat(SKILL_SIZE + 4.0)), Transform::from_xyz(x, y, 9.8)));
-            h.spawn((SkillIcon(k), Sprite::from_image(asset_server.load("icons/ayz/light.png")), Transform::from_xyz(x, y, 10.0)));
-            h.spawn((SkillShade(k), Sprite::from_color(Color::srgba(0.04, 0.04, 0.07, 0.74), Vec2::splat(SKILL_SIZE)), Transform::from_xyz(x, y, 10.1), Visibility::Hidden));
-            h.spawn((
-                SkillTimer(k),
-                Text2d::new(""),
-                crate::pixel_font(9.0),
-                TextColor(Color::WHITE),
-                Transform::from_xyz(x, y - 1.0, 10.3),
-            ));
-            // the key in the top-left corner, on a little dark badge
-            h.spawn((Sprite::from_color(Color::srgba(0.04, 0.03, 0.08, 0.9), Vec2::new(badge_w, 9.0)), Transform::from_xyz(badge_x, y + SKILL_SIZE / 2.0 - 5.5, 10.4)));
-            h.spawn((
-                Text2d::new(key),
-                crate::pixel_font(7.0),
-                TextColor(Color::srgb(1.0, 0.9, 0.5)),
-                Transform::from_xyz(badge_x, y + SKILL_SIZE / 2.0 - 5.5, 10.5),
-            ));
+        for player in 0..count {
+            let left = count > 1 && player % 2 == 0;
+            let y = -91.0 + (player / 2) as f32 * 42.0;
+            let side = if count == 1 { net.as_ref().map_or(0, |n| n.local) } else { player };
+            let c = &roster.0[sel.chars[side]];
+            let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
+            let portrait_x = if left { -176.0 } else { 176.0 };
+            h.spawn((Sprite { image: assets.load(format!("portraits/{folder}.png")), custom_size: Some(Vec2::splat(24.0)), ..default() }, Transform::from_xyz(portrait_x, y, 10.0)));
+            h.spawn((Text2d::new(format!("P{} {}", player + 1, c.name)), TextFont { font_size: FontSize::Px(6.0), ..crate::pixel_font(8.0) }, TextColor(Color::WHITE), Transform::from_xyz(if left { -126.0 } else { 126.0 }, y + 20.0, 10.5)));
+            for slot in 0..3 {
+                let x = if left { -146.0 + slot as f32 * 28.0 } else { 90.0 + slot as f32 * 28.0 };
+                for role in [SkillRole::Glow, SkillRole::Icon, SkillRole::Shade, SkillRole::Prompt] {
+                    let (size, z) = match role { SkillRole::Glow => (28.0, 9.8), SkillRole::Icon => (24.0, 10.0), SkillRole::Shade => (24.0, 10.1), SkillRole::Prompt => (12.0, 10.5) };
+                    let mut sprite = Sprite::from_color(Color::WHITE, Vec2::splat(size));
+                    if matches!(role, SkillRole::Icon) { sprite.image = assets.load(format!("icons/{folder}/light.png")); }
+                    let e = h.spawn((SkillPiece { player, slot, y, role }, sprite, Transform::from_xyz(x, y + if matches!(role, SkillRole::Prompt) { 7.0 } else { 0.0 }, z), Visibility::Hidden)).id();
+                    if matches!(role, SkillRole::Icon) { h.commands().entity(e).insert(SkillIcon); }
+                }
+                for timer in [false, true] {
+                    h.spawn((SkillText { player, slot, timer }, Text2d::new(""), crate::pixel_font(8.0), TextColor(if timer { Color::WHITE } else { Color::srgb(1.0, 0.9, 0.5) }), Transform::from_xyz(x, y + if timer { -1.0 } else { 7.0 }, 10.6), Visibility::Hidden));
+                }
+            }
         }
     });
 }
 
-/// Keep the skill bar in step with the fighter you control: their icons, what's available and the timers.
 pub fn animate_skill_bar(
-    sim: Res<Sim>,
-    roster: Res<Roster>,
-    sel: Res<Selection>,
-    time: Res<Time>,
-    net: Option<Res<crate::online::NetSession>>,
-    asset_server: Res<AssetServer>,
-    mut icons: Query<(&SkillIcon, &mut Sprite), (Without<SkillShade>, Without<SkillGlow>)>,
-    mut shades: Query<(&SkillShade, &mut Sprite, &mut Transform, &mut Visibility), (Without<SkillIcon>, Without<SkillGlow>)>,
-    mut glows: Query<(&SkillGlow, &mut Sprite), (Without<SkillIcon>, Without<SkillShade>)>,
-    mut timers: Query<(&SkillTimer, &mut Text2d)>,
-    fresh: Query<(), Added<SkillIcon>>,
-    // which icon each slot shows now, so the image is only asked for when it changes
-    mut shown: Local<(String, [&'static str; 3])>,
+    sim: Res<Sim>, roster: Res<Roster>, sel: Res<Selection>, time: Res<Time>, mode: Res<crate::Mode>,
+    net: Option<Res<crate::online::NetSession>>, assets: Res<AssetServer>, settings: Res<crate::settings::Settings>,
+    slots: Res<crate::ControllerSlots>, activity: Res<crate::InputActivity>, pads: Query<(&Gamepad, Option<&Name>)>,
+    mut pieces: Query<(&SkillPiece, &mut Sprite, &mut Transform, &mut Visibility)>,
+    mut texts: Query<(&SkillText, &mut Text2d, &mut Visibility), Without<SkillPiece>>,
+    mut images: Local<HashMap<String, Handle<Image>>>,
 ) {
-    use t2f::sim::Button;
-    if !fresh.is_empty() {
-        *shown = Default::default();
-    }
-    let side = net.as_ref().map_or(0, |n| n.local);
-    let f = &sim.0.fighters[side.min(sim.0.fighters.len() - 1)];
-    let data = &roster.0[sel.chars[side.min(sim.0.fighters.len() - 1)]];
-    let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
-    let buttons = [Button::Light, Button::Heavy, Button::Special];
-    let names = ["light", "heavy", "special"];
-    // what each slot looks like right now: (available, frames of timer, how much of the icon is greyed from the top, 0..1)
-    let state = |k: usize| -> (bool, u32, f32) {
-        let index = data.find_move(buttons[k], false, false);
-        let cooling = index.is_some_and(|i| f.on_cooldown(i, data));
-        let raven_away = index.is_some_and(|i| data.moves[i].raven_move.is_some() && f.raven_away);
-        let waiting_for_meter = buttons[k] == Button::Special && f.meter < Fighter::METER_MAX;
-        let silenced = f.silenced > 0;
-        // the heavy turns into a bat (and back) whatever its cooldown; a bat can't use the others
-        let bat_slot = buttons[k] == Button::Heavy && (f.bat_ready > 0 || f.bat_form > 0);
-        let cooling = cooling && !bat_slot;
-        let bat_blocked = f.bat_form > 0 && buttons[k] != Button::Heavy;
-        let resting = buttons[k] == Button::Light && f.light_lock > 0;
-        let frames = if cooling { index.map_or(0, |i| f.cooldown_left_in(i, data)) } else if silenced { f.silenced } else if resting { f.light_lock } else { 0 };
-        let shade = if waiting_for_meter && !cooling && !silenced && !bat_blocked { 1.0 - f.meter as f32 / Fighter::METER_MAX as f32 } else { 1.0 };
-        (!(cooling || silenced || raven_away || waiting_for_meter || bat_blocked || resting), frames, shade)
+    use t2f::sim::{Button, Input};
+    let local = matches!(*mode, crate::Mode::LocalVersus | crate::Mode::LocalTeams);
+    let side = |p| if local { p } else { net.as_ref().map_or(0, |n| n.local) };
+    let family = |p| {
+        let slot = match *mode { crate::Mode::LocalTeams => [3, 0, 1, 2][p], crate::Mode::LocalVersus => if p == 0 { 1 } else { 0 }, _ => 0 };
+        let entity = slots.0[slot]?;
+        let (pad, name) = pads.get(entity).ok()?;
+        if p == 0 && activity.keyboard > activity.pads.get(&entity).copied().unwrap_or(0) { return None; }
+        Some(if ps_controller(pad.vendor_id(), name.map_or("", |n| n.as_str())) { "ps" } else { "xbox" })
     };
-    for (SkillIcon(k), mut sprite) in &mut icons {
-        let name = match names[*k] {
-            "heavy" if f.bat_form > 0 => "poof",
-            "heavy" if f.bat_ready > 0 => "bat",
-            name => name,
+    let state = |p, k| {
+        let f = &sim.0.fighters[side(p)];
+        let data = &roster.0[sel.chars[side(p)]];
+        let button = [Button::Light, Button::Heavy, Button::Special][k];
+        let index = data.find_move(button, false, false);
+        let bat_slot = button == Button::Heavy && (f.bat_ready > 0 || f.bat_form > 0);
+        let cooling = index.is_some_and(|i| f.on_cooldown(i, data)) && !bat_slot;
+        let raven = index.is_some_and(|i| data.moves[i].raven_move.is_some() && f.raven_away);
+        let meter = button == Button::Special && f.meter < Fighter::METER_MAX;
+        let resting = button == Button::Light && f.light_lock > 0;
+        let frames = if cooling { index.map_or(0, |i| f.cooldown_left_in(i, data)) } else if f.silenced > 0 { f.silenced } else if resting { f.light_lock } else { 0 };
+        let shade = if meter && !cooling && f.silenced == 0 { 1.0 - f.meter as f32 / Fighter::METER_MAX as f32 } else { 1.0 };
+        let available = !(cooling || raven || meter || resting || f.silenced > 0 || (f.bat_form > 0 && button != Button::Heavy));
+        (available, frames, shade)
+    };
+    for (piece, mut sprite, mut tf, mut visibility) in &mut pieces {
+        let (available, _, shade) = state(piece.player, piece.slot);
+        let f = &sim.0.fighters[side(piece.player)];
+        let data = &roster.0[sel.chars[side(piece.player)]];
+        *visibility = Visibility::Inherited;
+        let path = match piece.role {
+            SkillRole::Icon => {
+                let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
+                let name = match piece.slot { 1 if f.bat_form > 0 => "poof", 1 if f.bat_ready > 0 => "bat", k => ["light", "heavy", "special"][k] };
+                Some(format!("icons/{folder}/{name}.png"))
+            }
+            SkillRole::Prompt => match family(piece.player) {
+                Some(family) => Some(format!("ui/controls/{family}_{}.png", ["light", "heavy", "ultimate"][piece.slot])),
+                None => { *visibility = Visibility::Hidden; None }
+            },
+            SkillRole::Glow => { sprite.color = Color::srgba(1.0, 0.85, 0.3, if available && piece.slot == 2 { 0.55 + 0.45 * (time.elapsed_secs() * 7.0).sin() } else { 0.0 }); None },
+            SkillRole::Shade => {
+                *visibility = if available { Visibility::Hidden } else { Visibility::Inherited };
+                sprite.color = Color::srgba(0.04, 0.04, 0.07, 0.74);
+                let h = SKILL_SIZE * shade;
+                sprite.custom_size = Some(Vec2::new(SKILL_SIZE, h));
+                tf.translation.y = piece.y + SKILL_SIZE / 2.0 - h / 2.0;
+                None
+            }
         };
-        if shown.0 != folder || shown.1[*k] != name {
-            sprite.image = asset_server.load(format!("icons/{folder}/{name}.png"));
-            shown.1[*k] = name;
-        }
+        if let Some(path) = path { sprite.image = images.entry(path.clone()).or_insert_with(|| assets.load(path)).clone(); }
     }
-    if shown.0 != folder {
-        shown.0 = folder.clone();
-    }
-    for (SkillShade(k), mut sprite, mut tf, mut visibility) in &mut shades {
-        let (available, _, shade) = state(*k);
-        set_ne!(*visibility, if available { Visibility::Hidden } else { Visibility::Inherited });
-        let h = SKILL_SIZE * shade;
-        sprite.custom_size = Some(Vec2::new(SKILL_SIZE, h));
-        // the grey covers the top of the icon down to `h`
-        set_ne!(tf.translation.y, SKILL_Y + SKILL_SIZE / 2.0 - h / 2.0);
-    }
-    for (SkillGlow(k), mut sprite) in &mut glows {
-        let (available, _, _) = state(*k);
-        let pulse = 0.55 + 0.45 * (time.elapsed_secs() * 7.0).sin();
-        // the special shouts when it's ready; the others have a quiet edge
-        let alpha = if available && buttons[*k] == Button::Special { pulse } else { 0.0 };
-        set_ne!(sprite.color, Color::srgba(1.0, 0.85, 0.3, alpha));
-    }
-    for (SkillTimer(k), mut text) in &mut timers {
-        let (_, frames, _) = state(*k);
-        let shown = if frames > 0 { format!("{:.1}", frames as f32 / 60.0) } else { String::new() };
-        if text.0 != shown {
-            text.0 = shown;
-        }
+    for (label, mut text, mut visibility) in &mut texts {
+        let (_, frames, _) = state(label.player, label.slot);
+        let keyboard = label.player == 0 && family(0).is_none();
+        let value = if label.timer { if frames > 0 { format!("{:.1}", frames as f32 / 60.0) } else { String::new() } } else if keyboard { crate::settings::key_name(settings.key([Input::LIGHT, Input::HEAVY, Input::SPECIAL][label.slot])) } else { String::new() };
+        *visibility = if value.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+        if text.0 != value { text.0 = value; }
     }
 }
 
@@ -1718,6 +1701,16 @@ pub fn controller_legend(commands: &mut Commands, assets: &AssetServer, state: A
     }
 }
 
-pub fn spawn_controller_legend(mut commands: Commands, assets: Res<AssetServer>, hud: Single<Entity, With<crate::HudRoot>>) {
-    controller_legend(&mut commands, &assets, AppState::Fight, Some(*hud), -81.0);
+
+#[cfg(test)]
+mod controller_prompt_tests {
+    use super::ps_controller;
+    #[test]
+    fn detects_ps_and_xbox_by_vendor_or_device_name() {
+        assert!(ps_controller(Some(0x054c), "Wireless Controller"));
+        assert!(ps_controller(None, "DualSense Wireless Controller"));
+        assert!(ps_controller(None, "PS4 Controller"));
+        assert!(!ps_controller(Some(0x045e), "Xbox Wireless Controller"));
+        assert!(!ps_controller(None, "Xbox 360 Controller"));
+    }
 }

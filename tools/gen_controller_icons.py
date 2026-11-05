@@ -25,7 +25,7 @@ for family in ['ps','xbox']:
             else: d.ellipse((5,5,10,10),outline=color)
         elif action.startswith('roll'):
             d.rounded_rectangle((0,2,15,13),radius=2,fill=dark,outline=white)
-            text(d,('L1' if family=='ps' else 'LB') if action=='roll_left' else ('R2' if family=='ps' else 'RT'),white)
+            text(d,('L1' if family=='ps' else 'LB') if action=='roll_left' else ('R1' if family=='ps' else 'RB'),white)
         elif action=='pause':
             d.rounded_rectangle((1,3,14,12),radius=2,fill=dark,outline=white)
             for y in [5,7,9]: d.line((5,y,10,y),fill=white)
