@@ -4741,7 +4741,7 @@ dependencies = [
 
 [[package]]
 name = "t2f"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "arboard",
  "bevy",
