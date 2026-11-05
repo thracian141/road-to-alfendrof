@@ -1743,6 +1743,20 @@ mod tests {
     }
 
     #[test]
+    fn surrender_from_any_team_member_ends_the_team_match() {
+        let data = ayz();
+        for who in 0..4 {
+            let mut s = GameState::team_match();
+            let team = s.teams[who] as usize;
+            let mut inputs = [Input::default(); 4];
+            inputs[who] = Input(Input::SURRENDER);
+            s.step(inputs, [&data; 4]);
+            assert_eq!(s.phase, Phase::MatchOver);
+            assert_eq!(s.match_winner(), Some(1 - team));
+        }
+    }
+
+    #[test]
     fn team_round_requires_both_enemies_to_be_knocked_out() {
         let mut s = GameState::team_match();
         let c = ayz();

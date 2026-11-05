@@ -287,6 +287,21 @@ impl std::ops::Deref for MenuInput {
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
+#[derive(Resource, Default)]
+struct InputActivity { frame: u64, keyboard: u64, pads: std::collections::HashMap<Entity, u64> }
+
+fn track_input_activity(keys: Res<ButtonInput<KeyCode>>, pads: Query<(Entity, &Gamepad)>, mut activity: ResMut<InputActivity>) {
+    activity.frame += 1;
+    let now = activity.frame;
+    if keys.get_just_pressed().next().is_some() { activity.keyboard = now; }
+    for (entity, pad) in &pads {
+        use bevy::input::gamepad::GamepadAxis as A;
+        if pad.get_just_pressed().next().is_some() || pad.get(A::LeftStickX).unwrap_or(0.0).abs() > 0.5 || pad.get(A::LeftStickY).unwrap_or(0.0).abs() > 0.5 {
+            activity.pads.insert(entity, now);
+        }
+    }
+}
+
 fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut input: ResMut<MenuInput>, mut previous: Local<[bool; 4]>, state: Res<State<AppState>>, pause: Res<menus::Pause>, sim: Res<Sim>, mut pause_press: ResMut<ControllerPause>) {
     use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
     input.0 = keys.clone();
@@ -363,6 +378,8 @@ fn main() {
         .insert_resource(DebugView(dev.debug))
         .init_resource::<MenuInput>()
         .init_resource::<ControllerPause>()
+        .init_resource::<InputActivity>()
+        .add_systems(PreUpdate, track_input_activity.after(bevy::input::InputSystems))
         .init_resource::<ControllerSlots>()
         .add_systems(PreUpdate, assign_controllers.after(bevy::input::InputSystems))
         .add_systems(PreUpdate, controller_menu_input.after(bevy::input::InputSystems))
@@ -380,7 +397,7 @@ fn main() {
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_controller_legend, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn, render::compact_hud).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
             rings.0.clear();
             clear.0 = MENU_BACKGROUND;
@@ -438,8 +455,8 @@ fn main() {
     } else {
         app.init_state::<AppState>();
     }
-    if dev.cpu {
-        app.insert_resource(Mode::VsCpu);
+    if dev.cpu || args.iter().any(|a| a == "--local-vs" || a == "--local-2v2") {
+        app.insert_resource(if args.iter().any(|a| a == "--local-2v2") { Mode::LocalTeams } else if args.iter().any(|a| a == "--local-vs") { Mode::LocalVersus } else { Mode::VsCpu });
     }
     app.insert_resource(dev).run();
 }
@@ -708,7 +725,7 @@ fn controller_fight_input(pad: &Gamepad) -> t2f::sim::Input {
             (pad.pressed(B::East), Input::SPECIAL),
             (pad.pressed(B::South), Input::BLOCK),
             (pad.pressed(B::LeftTrigger), Input::ROLL_LEFT),
-            (pad.pressed(B::RightTrigger2) || pad.get(B::RightTrigger2).unwrap_or(0.0) > 0.5, Input::ROLL_RIGHT),
+            (pad.pressed(B::RightTrigger), Input::ROLL_RIGHT),
         ] { if pressed { input.0 |= flag; } }
     input
 }
@@ -970,8 +987,13 @@ fn restart_match(
     mode: Res<Mode>,
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
+    mut was_over: Local<bool>,
 ) {
-    if menus::confirm_pressed(&input.0) && sim.0.phase == Phase::MatchOver {
+    let over = sim.0.phase == Phase::MatchOver;
+    let just_ended = over && !*was_over;
+    *was_over = over;
+    if just_ended { return; }
+    if menus::confirm_pressed(&input.0) && over {
         if *mode == Mode::Online {
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
@@ -1011,15 +1033,37 @@ mod controller_tests {
     use bevy::input::gamepad::GamepadButton as B;
 
     #[test]
+    fn surrender_confirmation_cannot_immediately_start_a_rematch() {
+        let mut app = App::new();
+        let data = CharacterData::from_ron(include_str!("sim/classic_fighter.ron")).unwrap();
+        let mut sim = Sim(GameState::team_match());
+        sim.0.phase = Phase::MatchOver;
+        sim.0.wins = [0, 2];
+        let mut input = MenuInput::default();
+        input.0.press(KeyCode::Enter);
+        app.insert_resource(sim).insert_resource(Roster(vec![data]))
+            .insert_resource(Selection::default()).insert_resource(Mode::LocalTeams)
+            .insert_resource(input).init_resource::<NextState<AppState>>()
+            .add_systems(Update, restart_match);
+        app.update();
+        assert_eq!(app.world().resource::<Sim>().0.phase, Phase::MatchOver);
+        let mut input = app.world_mut().resource_mut::<MenuInput>();
+        input.0.reset_all();
+        input.0.press(KeyCode::Enter);
+        app.update();
+        assert_eq!(app.world().resource::<Sim>().0.phase, Phase::Countdown(0));
+    }
+
+    #[test]
     fn controller_combat_buttons_match_ps_and_xbox_positions() {
-        for (button, action) in [(B::South, Input::BLOCK), (B::West, Input::LIGHT), (B::North, Input::HEAVY), (B::East, Input::SPECIAL), (B::LeftTrigger, Input::ROLL_LEFT), (B::RightTrigger2, Input::ROLL_RIGHT)] {
+        for (button, action) in [(B::South, Input::BLOCK), (B::West, Input::LIGHT), (B::North, Input::HEAVY), (B::East, Input::SPECIAL), (B::LeftTrigger, Input::ROLL_LEFT), (B::RightTrigger, Input::ROLL_RIGHT)] {
             let mut pad = Gamepad::default();
             pad.digital_mut().press(button);
             assert_eq!(controller_fight_input(&pad).0, action);
         }
         let mut pad = Gamepad::default();
-        pad.digital_mut().press(B::RightTrigger);
-        assert_eq!(controller_fight_input(&pad).0, 0, "R1/RB must not roll");
+        pad.digital_mut().press(B::RightTrigger2);
+        assert_eq!(controller_fight_input(&pad).0, 0, "R2/RT must not roll");
     }
 
     #[test]
