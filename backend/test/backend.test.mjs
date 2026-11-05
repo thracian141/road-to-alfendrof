@@ -63,23 +63,22 @@ test('friend requests require recipient acceptance, support presence and block i
  await data('/v1/blocks',2,'POST',{user_id:'user0'});
  await data('/v1/friends',0,'POST',{friend_code:'000000000002'},404);
 });
-test('private 1v1 rooms reject strangers and build mismatches; ready clients relay packets with server-owned sender IDs',async()=>{
+test('private rooms exchange only UDP candidates and readiness; gameplay relay is absent',async()=>{
  const room=await data('/v1/rooms',0,'POST',{mode:'1v1',build:'test-build'},201);
  await data(`/v1/rooms/${room.id}`,2,'GET',undefined,403);
  await data(`/v1/rooms/${room.id}/join`,1,'POST',{},403);
  await data(`/v1/rooms/${room.id}/invite`,0,'POST',{user_id:'user1'});
- const invitations=await data('/v1/invites',1);assert.equal(invitations.invites[0].room_id,room.id);
  const joined=await data(`/v1/rooms/${room.id}/join`,1,'POST',{},201);assert.equal(joined.slot,1);
- await data(`/v1/rooms/${room.id}/ws?build=wrong`,0,'GET',undefined,409);
- const a=await ws(`/v1/rooms/${room.id}/ws?build=test-build`,0),b=await ws(`/v1/rooms/${room.id}/ws?build=test-build`,1);
- for(const [i,p] of [a,b].entries())p.socket.send(JSON.stringify({type:'pick',character:i}));
- await until(()=>a.messages.some(m=>m.type==='players'&&m.players.every(p=>p.character!==null)));
- for(const p of [a,b])p.socket.send(JSON.stringify({type:'ready',ready:true}));
- await until(()=>a.messages.some(m=>m.type==='start'));await until(()=>b.messages.some(m=>m.type==='start'));
- a.socket.send(JSON.stringify({type:'packet',from:999,to:1,payload:'AQID'}));
- const packet=await until(()=>b.messages.find(m=>m.type==='packet'));assert.equal(packet.from,0);assert.equal(packet.payload,'AQID');
+ const signal=(character,ready)=>({build:'test-build',character,ready,candidates:['127.0.0.1:7777']});
+ await data(`/v1/rooms/${room.id}/signal`,0,'POST',{...signal(0,false),build:'wrong'},409);
+ await data(`/v1/rooms/${room.id}/signal`,2,'POST',signal(2,true),403);
+ await data(`/v1/rooms/${room.id}/signal`,0,'POST',{...signal(0,false),candidates:['example.com:80']},400);
+ await data(`/v1/rooms/${room.id}/signal`,0,'POST',{...signal(0,true),slot:99,user:'spoof'});
+ const started=await data(`/v1/rooms/${room.id}/signal`,1,'POST',signal(1,true));assert.equal(started.playing,true);
+ const state=await data(`/v1/rooms/${room.id}/state`);assert.deepEqual(state.players.map(p=>p.slot),[0,1]);assert.equal(state.players[0].user,'user0');assert.equal(state.players[0].candidates[0],'127.0.0.1:7777');
+ await data(`/v1/rooms/${room.id}/ws?build=test-build`,0,'GET',undefined,404);
  await data(`/v1/rooms/${room.id}`,1,'DELETE',undefined,403);
- await data(`/v1/rooms/${room.id}`,0,'DELETE');await until(()=>a.socket.readyState>=2);
+ await data(`/v1/rooms/${room.id}`,0,'DELETE');
 });
 test('2v2 room enforces four slots, explicit friendship and room capacity under concurrent joins',async()=>{
  for(const i of [2,3,4]){if(i===2)sql("DELETE FROM blocks;");await data('/v1/friends',0,'POST',{friend_code:`00000000000${i}`},201);await data('/v1/friends/user0/accept',i,'POST',{});}
@@ -89,6 +88,13 @@ test('2v2 room enforces four slots, explicit friendship and room capacity under 
  assert.equal(results.filter(r=>r.status===201).length,3);assert.equal(results.filter(r=>r.status===409).length,1);
  const state=await data(`/v1/rooms/${room.id}`);assert.deepEqual(state.members.map(m=>m.slot),[0,1,2,3]);
  await data(`/v1/rooms/${room.id}`,0,'DELETE');
+});
+test('concurrent matchmaking forms a four-person room without exceeding capacity',async()=>{
+ const results=await Promise.all([0,1,2,3].map(i=>data('/v1/matchmaking',i,'POST',{mode:'2v2',build:'queue-test'},201)));
+ assert.equal(new Set(results.map(r=>r.id)).size,1);assert.deepEqual(results.map(r=>r.slot).sort(),[0,1,2,3]);
+ const other=await data('/v1/matchmaking',4,'POST',{mode:'2v2',build:'different-build'},201);assert.notEqual(other.id,results[0].id);
+ for(const [i,r] of results.entries())await data(`/v1/rooms/${r.id}/leave`,i,'POST',{},i===0?200:404);
+ await data(`/v1/rooms/${other.id}/leave`,4,'POST',{});
 });
 test('logout revokes the bearer session and closes presence',async()=>{
  const p=await ws('/v1/events',3);await data('/v1/logout',3,'POST',{});await until(()=>p.socket.readyState>=2);await data('/v1/me',3,'GET',undefined,401);

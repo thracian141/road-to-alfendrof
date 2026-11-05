@@ -40,7 +40,7 @@ function page(text: string) { return new Response(`<!doctype html><meta charset=
 
 async function handle(request: Request,env: Env): Promise<Response> {
   const url=new URL(request.url), p=url.pathname, method=request.method;
-  if (p==='/health' && method==='GET') return json({ok:true,service:'alfendrof-multiplayer',protocol:1});
+  if (p==='/health' && method==='GET') return json({ok:true,service:'alfendrof-multiplayer',protocol:2});
   if (p==='/auth/device' && method==='POST') {
     await rate(env,request,'login',5);
     check(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET,503,'Discord login is not configured');
@@ -88,6 +88,7 @@ async function handle(request: Request,env: Env): Promise<Response> {
     await Promise.all(memberships.results.map(m=>env.ROOMS.getByName(m.room_id).disconnect(me.id)));
     return json({ok:true});
   }
+  if (p==='/v1/presence' && method==='POST') { await env.PRESENCE.getByName(me.id).heartbeat(); return json({ok:true}); }
   if (p==='/v1/events' && method==='GET') return env.PRESENCE.getByName(me.id).fetch(new Request('https://presence/ws',{headers:{Upgrade:request.headers.get('Upgrade')||''}}));
   if (p==='/v1/friends' && method==='GET') {
     const rows=await env.DB.prepare('SELECT u.id,u.name,u.friend_code,f.state,f.requester FROM friendships f JOIN users u ON u.id=CASE WHEN f.a=? THEN f.b ELSE f.a END WHERE f.a=? OR f.b=?').bind(me.id,me.id,me.id).all<User & {state:string;requester:string}>();
@@ -124,7 +125,19 @@ async function handle(request: Request,env: Env): Promise<Response> {
     const count=await env.DB.prepare('SELECT count(*) AS n FROM rooms WHERE owner=? AND expires>?').bind(me.id,now()).first<{n:number}>(); check(count!.n<3,409,'Close an existing room first');
     await env.DB.batch([env.DB.prepare('INSERT INTO rooms(id,owner,mode,build,expires) VALUES(?,?,?,?,?)').bind(id,me.id,b.mode,build,now()+3*3600),env.DB.prepare('INSERT INTO members(room_id,user_id,slot) VALUES(?,?,0)').bind(id,me.id)]); return json({id,slot:0,mode:b.mode,build},201);
   }
-  const roomRoute=p.match(/^\/v1\/rooms\/([^/]+)(?:\/(invite|join|ws))?$/);
+  if (p==='/v1/matchmaking' && method==='POST') {
+    const b=await body(request); check(b.mode==='1v1'||b.mode==='2v2',400,'Invalid mode'); const build=field(b.build,128), cap=b.mode==='2v2'?4:2;
+    const existing=await env.DB.prepare('SELECT r.id,m.slot FROM rooms r JOIN members m ON m.room_id=r.id WHERE m.user_id=? AND r.public=1 AND r.started=0 AND r.mode=? AND r.build=? AND r.expires>?').bind(me.id,b.mode,build,now()).first();
+    if(existing) return json(existing);
+    const available=`r.public=1 AND r.started=0 AND r.mode=? AND r.build=? AND r.expires>? AND (SELECT count(*) FROM members WHERE room_id=r.id)<? AND NOT EXISTS(SELECT 1 FROM members m JOIN blocks b ON (b.blocker=m.user_id AND b.blocked=?) OR (b.blocked=m.user_id AND b.blocker=?) WHERE m.room_id=r.id)`;
+    const id=crypto.randomUUID();
+    const result=await env.DB.batch([
+      env.DB.prepare(`INSERT INTO rooms(id,owner,mode,build,expires,public) SELECT ?,?,?,?,?,1 WHERE NOT EXISTS(SELECT 1 FROM rooms r WHERE ${available})`).bind(id,me.id,b.mode,build,now()+3600,b.mode,build,now(),cap,me.id,me.id),
+      env.DB.prepare(`INSERT INTO members(room_id,user_id,slot) SELECT r.id,?,s FROM rooms r CROSS JOIN (SELECT 0 AS s UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) WHERE ${available} AND s<? AND NOT EXISTS(SELECT 1 FROM members WHERE room_id=r.id AND slot=s) ORDER BY r.expires,r.id,s LIMIT 1 RETURNING room_id AS id,slot`).bind(me.id,b.mode,build,now(),cap,me.id,me.id,cap)
+    ]);
+    check(result[1].results.length,409,'Try finding a match again'); return json(result[1].results[0],201);
+  }
+  const roomRoute=p.match(/^\/v1\/rooms\/([^/]+)(?:\/(invite|join|signal|state|leave))?$/);
   if (roomRoute) {
     const id=roomRoute[1], action=roomRoute[2];
     const room=await env.DB.prepare('SELECT * FROM rooms WHERE id=? AND expires>?').bind(id,now()).first<Config>(); check(room,404,'Room unavailable');
@@ -149,10 +162,23 @@ async function handle(request: Request,env: Env): Promise<Response> {
     check(member,403,'Room membership required');
     if (!action && method==='GET') return json({...room,members:(await env.DB.prepare('SELECT m.slot,u.id,u.name FROM members m JOIN users u ON u.id=m.user_id WHERE m.room_id=? ORDER BY m.slot').bind(id).all()).results});
     if (!action && method==='DELETE') { check(room.owner===me.id,403,'Only the host can close'); await env.ROOMS.getByName(id).shutdown(); await env.DB.prepare('DELETE FROM rooms WHERE id=?').bind(id).run(); return json({ok:true}); }
-    if (action==='ws' && method==='GET') {
-      check(url.searchParams.get('build')===room.build,409,'Game build mismatch');
-      const stub=env.ROOMS.getByName(id); await stub.configure(room);
-      return stub.fetch(new Request('https://room/ws',{headers:{Upgrade:request.headers.get('Upgrade')||'', 'X-Player':me.id,'X-Slot':String(member.slot)}}));
+    const stub=env.ROOMS.getByName(id); await stub.configure(room);
+    if(action==='state' && method==='GET') return json({...await stub.state(),members:(await env.DB.prepare('SELECT m.slot,u.name FROM members m JOIN users u ON u.id=m.user_id WHERE m.room_id=? ORDER BY m.slot').bind(id).all()).results});
+    if(action==='signal' && method==='POST') {
+      const b=await body(request); check(b.build===room.build,409,'Game build mismatch');
+      check(Number.isInteger(b.character) && Number(b.character)>=0 && Number(b.character)<256 && typeof b.ready==='boolean',400,'Invalid fighter or readiness');
+      check(Array.isArray(b.candidates) && b.candidates.length>0 && b.candidates.length<=3,400,'UDP addresses required');
+      const candidates=b.candidates.map(x=>field(x,64));
+      check(candidates.every(x=>{ const m=x.match(/^(\d{1,3}\.){3}\d{1,3}:(\d{1,5})$/); if(!m) return false; const [ip,port]=x.split(':'); return ip.split('.').every(n=>+n<=255) && +port>0 && +port<=65535 && ip!=='0.0.0.0'; }),400,'Invalid UDP address');
+      const state=await stub.signal(me.id,member.slot,Number(b.character),b.ready,candidates);
+      if(state.playing) await env.DB.prepare('UPDATE rooms SET started=1 WHERE id=?').bind(id).run();
+      return json(state);
+    }
+    if(action==='leave' && method==='POST') {
+      await stub.disconnect(me.id);
+      if(room.owner===me.id) { await stub.shutdown(); await env.DB.prepare('DELETE FROM rooms WHERE id=?').bind(id).run(); }
+      else await env.DB.prepare('DELETE FROM members WHERE room_id=? AND user_id=?').bind(id,me.id).run();
+      return json({ok:true});
     }
   }
   throw new Failure(404,'Not found');
@@ -165,56 +191,29 @@ export default {
 export class Presence extends DurableObject<Env> {
   constructor(ctx: DurableObjectState,env: Env) { super(ctx,env); ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping','pong')); }
   async fetch(request: Request) { if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket') return new Response('WebSocket required',{status:426}); for(const old of this.ctx.getWebSockets()) old.close(4000,'Signed in elsewhere'); const pair=new WebSocketPair(); this.ctx.acceptWebSocket(pair[1]); return new Response(null,{status:101,webSocket:pair[0]}); }
-  async disconnect() { for(const ws of this.ctx.getWebSockets()) ws.close(4003,'Signed out'); }
-  async online() { return this.ctx.getWebSockets().some(ws=>ws.readyState===1); }
+  async disconnect() { this.ctx.storage.kv.delete('heartbeat'); for(const ws of this.ctx.getWebSockets()) ws.close(4003,'Signed out'); }
+  async online() { return this.ctx.getWebSockets().some(ws=>ws.readyState===1) || (this.ctx.storage.kv.get<number>('heartbeat')||0)>now(); }
+  heartbeat() { this.ctx.storage.kv.put('heartbeat',now()+60); }
   async notify(event: unknown) { const data=JSON.stringify(event); for(const ws of this.ctx.getWebSockets()) { try { ws.send(data); } catch { ws.close(1011,'Reconnect'); } } }
   webSocketMessage(ws: WebSocket) { ws.close(1008,'Only ping is accepted'); }
   webSocketClose(ws: WebSocket,code:number) { ws.close(code,'Closed'); }
   webSocketError(ws: WebSocket) { ws.close(1011,'Reconnect'); }
 }
 
-type Attachment={user:string;slot:number;character:number|null;ready:boolean;window:number;messages:number};
+type Peer={user:string;slot:number;character:number;ready:boolean;candidates:string[]};
 export class Room extends DurableObject<Env> {
-  constructor(ctx: DurableObjectState,env: Env) { super(ctx,env); ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping','pong')); }
-  async configure(config: Config) { const old=await this.ctx.storage.get<Config>('config'); if(!old) { await this.ctx.storage.put('config',config); await this.ctx.storage.setAlarm(config.expires*1000); } }
-  async disconnect(user: string) { for(const ws of this.ctx.getWebSockets()) if((ws.deserializeAttachment() as Attachment).user===user) ws.close(4003,'Signed out'); }
-  async shutdown() { for(const ws of this.ctx.getWebSockets()) ws.close(4001,'Room closed'); await this.ctx.storage.deleteAll(); }
+  async configure(config: Config) { if(!this.ctx.storage.kv.get('config')) { this.ctx.storage.kv.put('config',config); await this.ctx.storage.setAlarm(config.expires*1000); } }
+  state() { const config=this.ctx.storage.kv.get<Config>('config'); check(config && config.expires>now(),410,'Room expired'); return {players:[...this.ctx.storage.kv.list<Peer>({prefix:'peer:'})].map(([,peer])=>peer).sort((a,b)=>a.slot-b.slot),playing:this.ctx.storage.kv.get<boolean>('playing')||false}; }
+  signal(user:string,slot:number,character:number,ready:boolean,candidates:string[]) {
+    const config=this.ctx.storage.kv.get<Config>('config'); check(config && config.expires>now(),410,'Room expired');
+    this.ctx.storage.transactionSync(()=>{
+      check(!this.ctx.storage.kv.get('playing'),409,'Match already started');
+      this.ctx.storage.kv.put(`peer:${slot}`,{user,slot,character,ready,candidates});
+      const peers=[...this.ctx.storage.kv.list<Peer>({prefix:'peer:'})].map(([,peer])=>peer);
+      if(peers.length===(config.mode==='2v2'?4:2) && peers.every(p=>p.ready)) this.ctx.storage.kv.put('playing',true);
+    }); return this.state();
+  }
+  disconnect(user:string) { for(const [key,peer] of this.ctx.storage.kv.list<Peer>({prefix:'peer:'})) if(peer.user===user) this.ctx.storage.kv.delete(key); }
+  async shutdown() { await this.ctx.storage.deleteAll(); }
   async alarm() { await this.shutdown(); }
-  snapshot() { return this.ctx.getWebSockets().filter(ws=>ws.readyState===1).map(ws=>ws.deserializeAttachment() as Attachment).map(({slot,character,ready})=>({slot,character,ready})).sort((a,b)=>a.slot-b.slot); }
-  broadcast(message: unknown) { const data=JSON.stringify(message); for(const ws of this.ctx.getWebSockets()) { try { ws.send(data); } catch { ws.close(1011,'Reconnect'); } } }
-  async fetch(request: Request) {
-    if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket') return new Response('WebSocket required',{status:426});
-    const config=await this.ctx.storage.get<Config>('config'); if(!config || config.expires<=now()) return new Response('Room expired',{status:410});
-    const user=request.headers.get('X-Player'), slot=Number(request.headers.get('X-Slot')); if(!user || !Number.isInteger(slot) || slot<0 || slot>=(config.mode==='2v2'?4:2)) return new Response('Invalid player',{status:403});
-    for(const ws of this.ctx.getWebSockets()) if((ws.deserializeAttachment() as Attachment).slot===slot) ws.close(4000,'Reconnected');
-    const pair=new WebSocketPair(), ws=pair[1]; this.ctx.acceptWebSocket(ws);
-    ws.serializeAttachment({user,slot,character:null,ready:false,window:now(),messages:0} satisfies Attachment);
-    ws.send(JSON.stringify({type:'hello',slot,mode:config.mode,build:config.build})); this.broadcast({type:'players',players:this.snapshot()}); return new Response(null,{status:101,webSocket:pair[0]});
-  }
-  async webSocketMessage(ws: WebSocket, raw: string|ArrayBuffer) {
-    await this.ctx.blockConcurrencyWhile(async () => {
-    try {
-      const config=await this.ctx.storage.get<Config>('config'); check(config && config.expires>now(),410,'Room expired');
-      check(typeof raw==='string' && raw.length<=6000,400,'Invalid message'); const b=JSON.parse(raw); const me=ws.deserializeAttachment() as Attachment;
-      if(me.window!==now()) { me.window=now();me.messages=0; } check(++me.messages<=240,429,'Message rate exceeded'); ws.serializeAttachment(me);
-      const phase=await this.ctx.storage.get<string>('phase');
-      if(b.type==='pick' && phase!=='playing') {
-        check(Number.isInteger(b.character)&&b.character>=0&&b.character<256,400,'Invalid fighter'); me.character=b.character; me.ready=false; ws.serializeAttachment(me); this.broadcast({type:'players',players:this.snapshot()}); return;
-      }
-      if(b.type==='ready' && phase!=='playing') {
-        check(me.character!==null && typeof b.ready==='boolean',400,'Pick a fighter first'); me.ready=b.ready; ws.serializeAttachment(me); const players=this.snapshot();
-        this.broadcast({type:'players',players}); if(players.length===(config.mode==='2v2'?4:2) && players.every(p=>p.ready)) { await this.ctx.storage.put('phase','playing'); this.broadcast({type:'start',players}); } return;
-      }
-      if(b.type==='packet') {
-        check(phase==='playing',409,'Match not started'); check(typeof b.payload==='string' && b.payload.length>0 && b.payload.length<=5464 && /^[A-Za-z0-9+/]+={0,2}$/.test(b.payload),400,'Invalid packet');
-        check(Number.isInteger(b.to)&&b.to!==me.slot&&b.to>=0&&b.to<(config.mode==='2v2'?4:2),400,'Invalid recipient');
-        const message=JSON.stringify({type:'packet',from:me.slot,payload:b.payload});
-        for(const peer of this.ctx.getWebSockets()) if(peer.readyState===1 && (peer.deserializeAttachment() as Attachment).slot===b.to) peer.send(message); return;
-      }
-      throw new Failure(400,'Unsupported message');
-    } catch { ws.close(1008,'Invalid room message'); }
-    });
-  }
-  webSocketClose(ws: WebSocket,code:number) { const me=ws.deserializeAttachment() as Attachment; ws.close(code,'Disconnected'); if(!this.ctx.getWebSockets().some(peer=>peer!==ws && peer.readyState===1 && (peer.deserializeAttachment() as Attachment).slot===me.slot)) this.broadcast({type:'left',slot:me.slot}); }
-  webSocketError(ws: WebSocket) { ws.close(1011,'Reconnect'); }
 }

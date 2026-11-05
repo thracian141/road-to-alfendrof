@@ -6,6 +6,7 @@ mod vulkan;
 mod menus;
 mod music;
 mod online;
+mod social;
 mod particles;
 mod render;
 mod outline;
@@ -55,6 +56,7 @@ pub enum AppState {
     CharSelect,
     StageSelect,
     Online,
+    Social,
     Options,
     Controls,
     Fight,
@@ -85,6 +87,7 @@ pub struct Stages(pub Vec<StageData>);
 pub struct Selection {
     pub chars: [usize; 4],
     pub stage: usize,
+    pub online_teams: bool,
 }
 
 #[derive(Resource, Default)]
@@ -398,6 +401,7 @@ fn main() {
         .add_plugins(music::MusicPlugin)
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
+        .add_plugins(social::SocialPlugin)
         .add_systems(Startup, spawn_camera)
         .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn, render::compact_hud).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
@@ -444,12 +448,12 @@ fn main() {
         .add_systems(Update, render::animate_zones.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (toggle_debug, dev_screenshot));
 
-    if let Some(state) = dev.preview.as_deref().and_then(|s| match s { "options" => Some(AppState::Options), "controls" => Some(AppState::Controls), "stages" => Some(AppState::StageSelect), _ => None }) {
+    if let Some(state) = dev.preview.as_deref().and_then(|s| match s { "social" => Some(AppState::Social), "options" => Some(AppState::Options), "controls" => Some(AppState::Controls), "stages" => Some(AppState::StageSelect), _ => None }) {
         app.insert_state(state);
     } else if dev.fight {
         // keep a bad index from crashing
         let last = app.world().resource::<Roster>().0.len() - 1;
-        app.insert_resource(Selection { chars: [dev.picks[0].min(last), dev.picks[1].min(last), 0, 0], stage: 0 });
+        app.insert_resource(Selection { chars: [dev.picks[0].min(last), dev.picks[1].min(last), 0, 0], stage: 0, online_teams: false });
         app.insert_state(AppState::Fight);
     } else if dev.online {
         app.insert_resource(Mode::Online);
@@ -507,7 +511,7 @@ fn spawn_fight(
 ) {
     // against the CPU only your own name is shown (online both were set when the match was agreed)
     if *mode != Mode::Online {
-        names.0 = [settings.username.clone(), String::new()];
+        names.0 = [settings.username.clone(), String::new(), String::new(), String::new()];
     }
     // (the fighters' skills are shown in the character select now, so the match starts with the countdown)
     *sim = fresh_sim(&roster, &selection, *mode, false);
@@ -803,8 +807,9 @@ fn step_sim(
         if let Some(mut net) = net {
             if let Some(problem) = online::step_online(&mut net, &mut sim, &roster, &sel, player, &mut fixed) {
                 info.message = problem;
+                let cloud=net.cloud;
                 commands.remove_resource::<online::NetSession>();
-                next.set(AppState::Online);
+                next.set(if cloud {AppState::Social}else{AppState::Online});
             }
         }
         return;
@@ -1009,7 +1014,7 @@ fn restart_match(
         if *mode == Mode::Online {
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
-            next.set(AppState::Online);
+            next.set(AppState::Social);
         } else {
             *sim = fresh_sim(&roster, &sel, *mode, false);
         }
@@ -1018,7 +1023,7 @@ fn restart_match(
 
 /// New match; each fighter starts with their character's health.
 fn fresh_sim(roster: &Roster, sel: &Selection, mode: Mode, briefing: bool) -> Sim {
-    if mode == Mode::LocalTeams {
+    if mode == Mode::LocalTeams || (mode == Mode::Online && sel.online_teams) {
         let mut state = GameState::team_match();
         state.phase = Phase::Countdown(0);
         state.set_health(sel.chars.map(|i| roster.0[i].health.unwrap_or(Fighter::MAX_HEALTH)));

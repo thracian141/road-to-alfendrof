@@ -1,10 +1,15 @@
 # Multiplayer backend
 
-Cloudflare Worker with D1 accounts/friends and hibernating Durable Objects for
-presence and private 1v1/2v2 WebSocket rooms. The Rust game currently uses its
-existing UDP transport; the desktop login, friends menu, and WebSocket/GGRS
-adapter are not yet integrated. A passing backend test is not a playable online
-match in the game.
+Cloudflare handles Discord accounts, game friends, presence, matchmaking and UDP
+connection discovery. Combat inputs and rollback snapshots never pass through
+Cloudflare: the native game uses a direct GGRS UDP mesh (two peers for 1v1,
+four for 2v2). There is no gameplay relay or relay fallback.
+
+In the game, open **Online**, sign in with Discord, then choose **Find players**
+or host a private room and invite accepted friends. Each player selects a
+fighter; the match starts once every player is ready and every direct UDP path
+has been discovered. The operating system credential store holds the session.
+Direct connection / LAN remains available without an account.
 
 ## Development
 
@@ -16,6 +21,7 @@ npm ci
 npm run types
 npm run check
 npm test
+npm run test:native
 npx wrangler d1 migrations apply DB --local
 npm run dev
 ```
@@ -33,9 +39,8 @@ in the ignored `.dev.vars` file; see `.dev.vars.example`. Never commit secrets.
 - Health: `GET /health`
 
 These resources use the Free plan allowances; quotas still apply. This project
-does not enable a paid plan. Each API call can read/write D1, while gameplay
-packets stay in the room Durable Object. Incoming WebSocket messages count
-toward Durable Object limits. See [Cloudflare pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+does not enable a paid plan. API calls can read/write D1. Room Durable Objects store pre-match
+connection details and readiness; presence notifications can use WebSockets. See [Cloudflare pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
 ## Configure Discord
 
@@ -61,7 +66,7 @@ npx wrangler d1 migrations apply DB --remote
 npm run deploy
 ```
 
-## Client protocol (version 1)
+## Client protocol (version 2)
 
 All JSON APIs require `Content-Type: application/json`. Authenticated calls
 and native WebSocket upgrades carry `Authorization: Bearer <access_token>`.
@@ -89,6 +94,7 @@ the session and closes that user's current connections.
 | `POST /v1/friends/:id/accept` | Accept an incoming request |
 | `DELETE /v1/friends/:id` | Remove a friendship/request |
 | `POST /v1/blocks` | Block using `{"user_id":"..."}` |
+| `POST /v1/presence` | Renew a 60-second online lease (native client: every 25 seconds) |
 | `GET /v1/events` (WebSocket) | `friend_request`, `friend_accepted`, `room_invite` |
 | `GET /v1/invites` | Pending room invitations |
 
@@ -105,25 +111,47 @@ using `POST /v1/rooms/:id/invite` with `{"user_id":"..."}`; invitees call
 `POST /v1/rooms/:id/join`. `GET /v1/rooms/:id` returns members and slots.
 The host closes the room using `DELETE /v1/rooms/:id`.
 
-Connect to `/v1/rooms/:id/ws?build=<fingerprint>` using an authenticated native
-WebSocket upgrade. The server assigns player IDs and slots. In 2v2, use teams
-`[0,1,0,1]` to match the game's local mode. Client messages:
+`POST /v1/matchmaking` with the same mode/build body atomically finds or creates
+a public room and returns `{id,slot}`. Full, already-started, blocked-player,
+and mismatched-build rooms are excluded. In 2v2 the slot teams are `[0,1,0,1]`.
+Use `POST /v1/rooms/:id/leave` to cancel a search or leave a room; a host leaving
+closes the room for everyone. Matchmaking is unranked and has no region filter.
+
+Exchange pre-match connection information using `POST /v1/rooms/:id/signal`:
 
 ```json
-{"type":"pick","character":0}
-{"type":"ready","ready":true}
-{"type":"packet","to":1,"payload":"<base64 GGRS packet>"}
+{"build":"<fingerprint>","character":0,"ready":false,"candidates":["203.0.113.1:7777","192.168.1.10:7777"]}
 ```
 
-The server sends `hello`, `players`, `start`, `left`, and `packet` messages.
-Read the authoritative slot from `hello`; all players must be ready before
-`start`. Relay packets only after `start`; received packets contain a
-server-owned `from` slot. Route decoded bytes into a native GGRS socket
-adapter. The server relays packets and coordinates the lobby; it does not
-simulate combat or validate outcomes. TCP/WebSocket transport characteristics
-differ from the game's existing UDP transport and need real match testing.
+The server owns player IDs/slots. Each member can update only their own
+candidates, fighter and readiness. `GET /v1/rooms/:id/state` returns `players`,
+`members` (names/slots), and `playing`. Poll at most once every 1.5 seconds.
+Send candidates before attempting direct UDP probes. The native client reuses
+the same UDP socket for STUN, room-scoped probes, and GGRS so NAT mappings
+remain valid. It probes public and LAN candidates, learns actual source
+addresses, and maps verified route aliases to stable GGRS peer addresses.
+Mark ready only after the fighter is locked and every peer is reachable.
+When all players are ready, `playing` becomes true and no more signaling is
+accepted. Combat then uses UDP exclusively; the discovery room is not needed
+to run the match. The old room WebSocket/packet-relay endpoint is removed.
 
-Rooms expire after three hours; invites and login requests after ten minutes.
-Room messages are capped at 240/second per connection, with base64 packet
-payloads up to 5464 characters. A disconnected match should return to the
-lobby; resumable live matches are not supported by this protocol.
+After all peers arrive, a direct connectivity failure times out after 30
+seconds. Some symmetric NAT/CGNAT or firewall configurations cannot establish
+direct UDP; use a suitable network or port forwarding. There is no TURN,
+WebSocket, or other gameplay relay fallback. A disconnected combat peer ends
+the session; live match reconnection is not implemented.
+
+Private rooms expire after three hours; matchmaking rooms after one hour;
+invites and login requests after ten minutes. Discovery requests remain
+subject to API limits. The native client polls friends/invitations every eight
+seconds in the lobby and renews its presence lease independently of gameplay.
+
+## Validation
+
+`npm test` exercises authentication, friends, blocking, private discovery,
+concurrent four-slot matchmaking and absence of the packet relay. The separate
+`npm run test:native` starts an isolated local Worker and runs the actual Rust
+HTTP/UDP client test. Four fixture accounts discover a room, exchange UDP
+candidates and probe each other, then close the backend room **before** running
+a four-player GGRS match. This proves local integration and direct transport;
+it does not establish connectivity across every real internet NAT topology.

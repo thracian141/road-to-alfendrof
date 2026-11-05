@@ -106,3 +106,17 @@ All seven payloads must be present: AppImage, DEB, RPM, Windows installer, Mac
 ZIP, Mac DMG, and Linux portable archive. A missing updater asset is treated as
 an unsuccessful update, not a reason to quit. See [RELEASING.md](RELEASING.md)
 for the canonical release and recovery procedure.
+
+## Online play
+
+Open **Online** and sign in with Discord. Add friends using their 12-character
+friend code, accept requests, host private 1v1/2v2 rooms, or choose **Find
+players** for unranked matchmaking. Select a fighter and ready up; everyone
+must establish a direct UDP path before the match starts. Controller menus and
+keyboard input are both supported. **Direct connection / LAN** retains the
+existing account-free connection flow.
+
+Cloudflare stores accounts/friends and coordinates matchmaking and peer
+addresses. Gameplay runs peer to peer over UDP with GGRS rollback; there is no
+gameplay relay. Restrictive NAT or firewalls can prevent a direct connection.
+See [backend setup and protocol](backend/README.md) for deployment and testing.
