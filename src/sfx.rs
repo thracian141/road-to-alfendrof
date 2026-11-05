@@ -75,6 +75,25 @@ const STEP_EVERY: u32 = 14;
 #[derive(Resource, Default)]
 struct Sounds {
     groups: HashMap<String, Vec<Handle<AudioSource>>>,
+    /// How long each variant of a group lasts, in frames (60 a second), in the same order.
+    frames: HashMap<String, Vec<u32>>,
+}
+
+/// The length of a WAV file in frames of 60 a second (0 if it can't be read).
+fn wav_frames(path: &std::path::Path) -> u32 {
+    let Ok(bytes) = std::fs::read(path) else { return 0 };
+    let u32_at = |i: usize| bytes.get(i..i + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u64);
+    let (mut at, mut bytes_per_second, mut data_len) = (12, 0, 0);
+    while at + 8 <= bytes.len() {
+        let len = u32_at(at + 4) as usize;
+        match &bytes[at..at + 4] {
+            b"fmt " => bytes_per_second = u32_at(at + 12),
+            b"data" => data_len = len.min(bytes.len() - at - 8) as u64,
+            _ => {}
+        }
+        at += 8 + len + (len & 1);
+    }
+    if bytes_per_second == 0 { 0 } else { (data_len * 60 / bytes_per_second) as u32 }
 }
 
 fn load_sounds(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -87,6 +106,7 @@ fn load_sounds(mut commands: Commands, asset_server: Res<AssetServer>) {
         .collect();
     files.sort();
     let mut groups: HashMap<String, Vec<Handle<AudioSource>>> = HashMap::new();
+    let mut frames: HashMap<String, Vec<u32>> = HashMap::new();
     for file in files {
         let stem = file.trim_end_matches(".wav");
         // "hit_small_1" belongs to the group "hit_small"
@@ -95,8 +115,9 @@ fn load_sounds(mut commands: Commands, asset_server: Res<AssetServer>) {
             _ => stem,
         };
         groups.entry(group.to_string()).or_default().push(asset_server.load(format!("sfx/{file}")));
+        frames.entry(group.to_string()).or_default().push(wav_frames(&crate::assets_dir().join("sfx").join(&file)));
     }
-    commands.insert_resource(Sounds { groups });
+    commands.insert_resource(Sounds { groups, frames });
 }
 
 /// Which of `len` variants to play: picked from `hash`, but never the one played last time (when there is a choice).
@@ -128,6 +149,12 @@ struct Voice {
     /// (a long cry started with `MoveSfx::voice_lock`): other lines from them stay quiet until then.
     speaker: usize,
     locks: [u32; 2],
+    /// How long (frames) the variant of each `voice_` group that played last lasts: the group isn't started again
+    /// before it is over.
+    last_len: HashMap<String, u32>,
+    /// Each character's attack cries now playing (see `CharacterVoice::attack_voice_channel`): the move they belong to,
+    /// their name, the frame they end and the sound itself, so a cry of another move can cut them off.
+    attack: [Vec<(usize, String, u32, Entity)>; 2],
 }
 
 impl Voice {
@@ -139,13 +166,24 @@ impl Voice {
 
     /// `throttle`: not again within `SAME_SOUND_GAP` frames of the last time it was started.
     fn play(&mut self, commands: &mut Commands, sounds: &Sounds, volume: f32, frame: u32, name: &str, throttle: bool) {
+        self.play_on(commands, sounds, volume, frame, name, throttle, None);
+    }
+
+    /// `channel`: the move of an attack cry of a character whose cries share a channel. It cuts off the cries still
+    /// playing of any other move (the cries of its own move play along with it, and this very line is left to finish)
+    /// and ignores the voice locks.
+    fn play_on(&mut self, commands: &mut Commands, sounds: &Sounds, volume: f32, frame: u32, name: &str, throttle: bool, channel: Option<usize>) {
         let Some(variants) = sounds.groups.get(name).filter(|v| !v.is_empty()) else { return };
         let own = name.starts_with(VOICE_PREFIX);
-        let gap = if own { VOICE_GAP } else { SAME_SOUND_GAP };
-        if own && self.locks[self.speaker] > frame {
+        let gap = if own { VOICE_GAP.max(self.last_len.get(name).copied().unwrap_or(0)) } else { SAME_SOUND_GAP };
+        let speaker = self.speaker;
+        if channel.is_some() && self.attack[speaker].iter().any(|(_, playing, until, _)| playing == name && *until > frame) {
             return;
         }
-        if volume <= 0.0 || ((throttle || own) && self.last.get(name).is_some_and(|&at| frame.wrapping_sub(at) < gap)) {
+        if own && channel.is_none() && self.locks[speaker] > frame {
+            return;
+        }
+        if volume <= 0.0 || (channel.is_none() && (throttle || own) && self.last.get(name).is_some_and(|&at| frame.wrapping_sub(at) < gap)) {
             return;
         }
         self.last.insert(name.to_string(), frame);
@@ -154,12 +192,27 @@ impl Voice {
         let pick = if own { pick_variant(self.last_variant.get(name).copied(), variants.len(), hash) } else { (hash >> 8) as usize % variants.len() };
         if own {
             self.last_variant.insert(name.to_string(), pick);
+            self.last_len.insert(name.to_string(), sounds.frames.get(name).and_then(|f| f.get(pick)).copied().unwrap_or(0));
         }
         let sound = &variants[pick];
         // a little pitch variation so repeated hits don't sound identical (not for the jingles, menus and voices)
         let jingle = own || ["round_", "match_", "ui_"].iter().any(|p| name.starts_with(p));
         let speed = if jingle { 1.0 } else { 0.94 + (hash >> 24) as f32 / 255.0 * 0.12 };
-        commands.spawn((AudioPlayer(sound.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume)).with_speed(speed)));
+        if let Some(this_move) = channel {
+            // cries of other moves are cut off; those that have finished are forgotten
+            for (from, playing_name, until, playing) in std::mem::take(&mut self.attack[speaker]) {
+                if from != this_move {
+                    commands.entity(playing).try_despawn();
+                } else if until > frame {
+                    self.attack[speaker].push((from, playing_name, until, playing));
+                }
+            }
+        }
+        let id = commands.spawn((AudioPlayer(sound.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume)).with_speed(speed))).id();
+        if let Some(this_move) = channel {
+            let len = sounds.frames.get(name).and_then(|f| f.get(pick)).copied().unwrap_or(0);
+            self.attack[speaker].push((this_move, name.to_string(), frame + len, id));
+        }
     }
 }
 
@@ -222,6 +275,12 @@ fn play_fight_sounds(
     let s = &sim.0;
     let frame = s.frame;
     let Memory { voice, fighters, shots, minions, started, round, round_over, match_over } = &mut *memory;
+    // a move's own cry: on the character's attack channel if it has one
+    macro_rules! play_cry {
+        ($name:expr, $who:expr, $move:expr) => {
+            voice.play_on(&mut commands, &sounds, volume, frame, $name, false, roster.0[sel.chars[$who]].voice.attack_voice_channel.then_some($move))
+        };
+    }
     macro_rules! play {
         ($name:expr, $throttle:expr) => {
             voice.play(&mut commands, &sounds, volume, frame, $name, $throttle)
@@ -350,7 +409,7 @@ fn play_fight_sounds(
                         if lock > 0 {
                             voice.locks[foe] = 0;
                         }
-                        play!(name, false);
+                        play_cry!(name, foe, source.unwrap_or(usize::MAX));
                         if lock > 0 {
                             voice.locks[foe] = frame + lock;
                         }
@@ -381,7 +440,7 @@ fn play_fight_sounds(
                     if mv.sfx.voice_lock > 0 {
                         voice.locks[i] = 0;
                     }
-                    play!(name, false);
+                    play_cry!(name, i, f.attack);
                     if mv.sfx.voice_lock > 0 {
                         voice.locks[i] = frame + mv.sfx.voice_lock;
                     }
@@ -393,6 +452,9 @@ fn play_fight_sounds(
             if (f.shots > prev.shots && now.state == FighterState::Attack) || summoning {
                 if let Some(name) = &mv.sfx.launch {
                     play!(name, true);
+                }
+                if let Some(name) = &mv.sfx.launch_voice {
+                    play_cry!(name, i, f.attack);
                 }
             }
 
@@ -478,5 +540,42 @@ mod tests {
         }
         // with a single sound there is nothing else to pick
         assert_eq!(pick_variant(Some(0), 1, 12345), 0);
+    }
+
+    /// Plays `name` as a cry of `mv` on the attack channel in `world` at `frame`.
+    fn cry(world: &mut World, voice: &mut Voice, sounds: &Sounds, name: &str, mv: usize, frame: u32) {
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        voice.play_on(&mut Commands::new(&mut queue, world), sounds, 1.0, frame, name, false, Some(mv));
+        queue.apply(world);
+    }
+
+    fn sounding(world: &World, voice: &Voice) -> usize {
+        voice.attack[0].iter().filter(|(_, _, _, e)| world.get_entity(*e).is_ok()).count()
+    }
+
+    #[test]
+    fn the_cries_of_one_move_play_together_and_the_cry_of_another_move_cuts_them_off() {
+        let mut world = World::new();
+        let mut sounds = Sounds::default();
+        for name in ["voice_x_jump", "voice_x_shoot", "voice_x_light"] {
+            sounds.groups.insert(name.to_string(), vec![Handle::default()]);
+            sounds.frames.insert(name.to_string(), vec![240]);
+        }
+        let mut voice = Voice::default();
+        // a heavy: the jump cry, then the shoot cry while the first is still going
+        cry(&mut world, &mut voice, &sounds, "voice_x_jump", 5, 0);
+        cry(&mut world, &mut voice, &sounds, "voice_x_shoot", 5, 40);
+        assert_eq!(sounding(&world, &voice), 2, "the two parts of a heavy don't interrupt each other");
+        // the same line again while it still plays is left alone
+        cry(&mut world, &mut voice, &sounds, "voice_x_shoot", 5, 48);
+        assert_eq!(sounding(&world, &voice), 2);
+        // a light cuts both off
+        cry(&mut world, &mut voice, &sounds, "voice_x_light", 0, 60);
+        assert_eq!(sounding(&world, &voice), 1, "and a light interrupts the heavy");
+        assert_eq!(voice.attack[0][0].1, "voice_x_light");
+        // and a heavy cuts the light off
+        cry(&mut world, &mut voice, &sounds, "voice_x_jump", 5, 90);
+        assert_eq!(sounding(&world, &voice), 1);
+        assert_eq!(voice.attack[0][0].1, "voice_x_jump");
     }
 }

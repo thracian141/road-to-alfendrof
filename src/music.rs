@@ -171,9 +171,11 @@ fn playback(settings: &Settings) -> PlaybackSettings {
 
 /// Options > Music volume, heard while it is changed.
 fn set_music_volume(settings: Res<Settings>, mut sinks: Query<&mut AudioSink, With<MusicPlayer>>) {
-    if settings.is_changed() {
-        for mut sink in &mut sinks {
-            sink.set_volume(Volume::Linear(settings.music_gain()));
+    // (every frame and only when it is off: whichever song is playing, whenever it started, follows the slider)
+    let wanted = settings.music_gain();
+    for mut sink in &mut sinks {
+        if (sink.volume().to_linear() - wanted).abs() > 0.001 {
+            sink.set_volume(Volume::Linear(wanted));
         }
     }
 }

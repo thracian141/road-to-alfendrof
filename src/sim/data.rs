@@ -403,6 +403,11 @@ pub struct CharacterVoice {
     pub dash: Option<String>,
     /// Taking a hit (not a block).
     pub hurt: Option<String>,
+    /// The cries of this character's attacks (a move's `voice`, `launch_voice` and `hit_voice`) share one channel: a
+    /// new one cuts off those of another move still playing (a light and a heavy interrupt each other; the parts of
+    /// one heavy play together). The other lines (dash, hurt, block...) are independent of it: they don't cut it off, aren't
+    /// cut off by it and don't wait for `voice_lock`.
+    pub attack_voice_channel: bool,
     /// Percent of hits that get the `hurt` sound (none: every hit; a character who would never stop crying out).
     pub hurt_chance: Option<u32>,
     /// Being knocked out.
@@ -438,6 +443,8 @@ pub struct MoveSfx {
     pub voice_lock: u32,
     /// The character's own sound when the move hits (not when it is blocked), on top of `hit`.
     pub hit_voice: Option<String>,
+    /// The character's own sound when the move's shot leaves (or its summon comes), on top of `launch`.
+    pub launch_voice: Option<String>,
     /// A sound that loops for as long as a held move is held (the scroll being read): it fades in as the move
     /// loads and fades out over a second when the move stops or is interrupted.
     pub sustain: Option<String>,
@@ -622,6 +629,9 @@ pub struct MoveData {
     /// This move's sounds (see `MoveSfx`).
     #[serde(default)]
     pub sfx: MoveSfx,
+    /// A swing (not a shot: that is `ProjectileData::unblockable`) that guarding doesn't stop; it has to be dodged.
+    #[serde(default)]
+    pub unblockable: bool,
     /// Its cooldown is shared with the character's other moves of this button that say so too: using one puts them
     /// all on cooldown (a heavy that is a different move close up and far away).
     #[serde(default)]

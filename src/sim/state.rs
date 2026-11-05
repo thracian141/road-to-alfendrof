@@ -547,7 +547,7 @@ impl GameState {
             self.fighters[a].hitstop = mv.hitstop;
             let power = if self.fighters[a].finisher { 150 } else { 100 };
             // a hand out of a portal can't be blocked, only dodged
-            let can_block = blocks[1 - a] && base.portal.is_none();
+            let can_block = blocks[1 - a] && base.portal.is_none() && !base.unblockable;
             let blocked = self.apply_hit(1 - a, mv, dir, can_block, power);
             // too many blocked swings in a row and the attacker is stunned
             self.count_blocked_attack(a, base, blocked, dir);
@@ -4185,6 +4185,26 @@ mod tests {
         let after = (s.fighters[1].x - s.fighters[0].x).abs();
         assert!(s.fighters[1].health < Fighter::MAX_HEALTH, "the scratch landed");
         assert!(after < before, "and drew them in ({before} -> {after})");
+    }
+
+    #[test]
+    fn junkheads_special_cannot_be_blocked() {
+        let j = CharacterData::from_ron(include_str!("../../assets/characters/junkhead.ron")).unwrap();
+        let e = ayz();
+        let run = |guard: bool| {
+            let mut s = GameState::new();
+            s.fighters[0].meter = Fighter::METER_MAX;
+            s.fighters[0].x = -50 * PX;
+            s.fighters[1].x = 50 * PX;
+            s.step([Input(Input::SPECIAL), Input(0)], [&j, &e]);
+            for _ in 0..90 {
+                s.step([Input(0), Input(if guard { Input::BLOCK } else { 0 })], [&j, &e]);
+            }
+            Fighter::MAX_HEALTH - s.fighters[1].health
+        };
+        let open = run(false);
+        assert!(open > 0, "the lash lands on an enemy in the open");
+        assert_eq!(run(true), open, "and guarding changes nothing: it can't be blocked");
     }
 
     #[test]

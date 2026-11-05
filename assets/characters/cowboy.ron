@@ -29,10 +29,13 @@
     // the special meter fills at 43% of the normal rate
     meter_gain_pct: Some(43),
     special_mark: Some(GlowingHat),
+    // the Cowboy's own voice, on top of the game's generic sounds (assets/sfx/voice_cowboy_*.wav, made by tools/voice_prep.py --trim)
+    voice: (attack_voice_channel: true, dash: Some("voice_cowboy_dash"), hurt: Some("voice_cowboy_hurt"), ko: Some("voice_cowboy_death"), block: Some("voice_cowboy_block"),
+            guard_break: Some("voice_cowboy_stunned"), smash: Some("voice_cowboy_stomp"), win: Some("voice_cowboy_win")),
     air_shot_tilt: true,
     moves: [
         // the combo: shot, shot, lasso
-        (name: "Finger Shot", sfx: (cast: Some(""), launch: Some("shot_pistol")), button: Light, crouching: false, anim: Punch, walk_pct: 60, combo_step: Some(0),
+        (name: "Finger Shot", sfx: (cast: Some(""), launch: Some("shot_pistol"), voice: Some("voice_cowboy_light")), button: Light, crouching: false, anim: Punch, walk_pct: 60, combo_step: Some(0),
          startup: 6, active: 2, recovery: 6, damage: 26, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 3,
          hitbox: (x: 0, y: 0, w: 0, h: 0),
          projectile: Some((x: 30, y: 44, aim_y: 44, travel_frames: 1, lifetime: 50, size: (8, 6), image: Some("bullet"), speed: 6))),
@@ -41,7 +44,7 @@
          hitbox: (x: 0, y: 0, w: 0, h: 0),
          projectile: Some((x: 30, y: 44, aim_y: 44, travel_frames: 1, lifetime: 50, size: (8, 6), image: Some("bullet"), speed: 6))),
         // third hit: the lasso drags the opponent in a little and leaves them stunned
-        (name: "Lasso", sfx: (cast: Some("whip_crack")), button: Light, crouching: false, anim: Punch, walk_pct: 0, finisher_move: true,
+        (name: "Lasso", sfx: (cast: Some("whip_crack"), voice: Some("voice_cowboy_combo")), button: Light, crouching: false, anim: Punch, walk_pct: 0, finisher_move: true,
          pull_foe: true, pull_gap: 38, assist: 8, rope: true,
          startup: 11, active: 4, recovery: 16, damage: 30, hitstun: 48, blockstun: 10, knockback: 0, hitstop: 5,
          hitbox: (x: 10, y: 26, w: 120, h: 18)),
@@ -49,12 +52,12 @@
          startup: 10, active: 3, recovery: 9, damage: 24, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 4,
          hitbox: (x: 12, y: 0, w: 26, h: 12)),
         // the one aimed shot, from the air
-        (name: "Air Shot", sfx: (cast: Some(""), launch: Some("shot_pistol")), button: Light, crouching: false, air: true, anim: Hard, walk_pct: 100,
+        (name: "Air Shot", sfx: (cast: Some(""), launch: Some("shot_pistol"), voice: Some("voice_cowboy_light")), button: Light, crouching: false, air: true, anim: Hard, walk_pct: 100,
          startup: 15, active: 2, recovery: 14, damage: 45, hitstun: 18, blockstun: 12, knockback: 3, hitstop: 6,
          hitbox: (x: 0, y: 0, w: 0, h: 0),
          projectile: Some((x: 26, y: 26, aim_y: 28, travel_frames: 12, lifetime: 40, size: (10, 6), image: Some("bullet"), aimed: true))),
         // both guns at the ground (the splash), up he goes, then the volley at the enemy; needs the ground
-        (name: "Gun Boost", sfx: (cast: Some("shot_shotgun"), launch: Some("shot_pistol")), button: Heavy, crouching: false, anim: Boost, walk_pct: 0,
+        (name: "Gun Boost", sfx: (cast: Some("shot_shotgun"), launch: Some("shot_pistol"), voice: Some("voice_cowboy_heavy_jump"), launch_voice: Some("voice_cowboy_heavy_shoot")), button: Heavy, crouching: false, anim: Boost, walk_pct: 0,
          leap: 1296, leap_vx: 40, slow_fall: 20, escape: true, radial: true, guard_hits: Some(2), cooldown: 150,
          committed: true, commit_at: Some(3),
          volley: 4, volley_gap: 8, volley_delay: 24, shot_damage: Some(11),
@@ -62,7 +65,7 @@
          hitbox: (x: -48, y: 0, w: 96, h: 30),
          projectile: Some((x: 30, y: 30, aim_y: 30, travel_frames: 10, lifetime: 45, size: (10, 6), image: Some("bullet"), aimed: true, aim_ground: true, spread: 48))),
         // the hat: it flies at the enemy and the curse starts where it lands (the damage comes when the ring closes)
-        (name: "Hell's Hat", sfx: (cast: Some("fire_cast"), launch: Some("fire_burst"), hit: Some("fire_hit")), button: Special, crouching: false, anim: Summon, walk_pct: 0, cooldown: 420,
+        (name: "Hell's Hat", sfx: (cast: Some("fire_cast"), launch: Some("fire_burst"), hit: Some("fire_hit"), voice: Some("voice_cowboy_ult")), button: Special, crouching: false, anim: Summon, walk_pct: 0, cooldown: 420,
          curse: Some((duration: 420, squeeze: 24)),
          startup: 22, active: 3, recovery: 22, damage: 200, hitstun: 24, blockstun: 16, knockback: 0, hitstop: 8,
          hitbox: (x: 0, y: 0, w: 0, h: 0),

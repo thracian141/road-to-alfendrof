@@ -1,10 +1,11 @@
 """Cleans up a folder of voice recordings and turns them into game sounds.
 
-    python tools/voice_prep.py <in folder> <out folder> <prefix> [--bass 0.2] [--target -18]
+    python tools/voice_prep.py <in folder> <out folder> <prefix> [--bass 0.2] [--target -18] [--trim]
 
 For every wav: noise reduction (a spectral gate), a bass boost, the crunchy 16-bit treatment of tools/chiptune.py,
 then loudness normalization (tools/loudness.py). The result is written to <out folder> as `<prefix>_<name>_<n>.wav`
 (the name's digit, counted from 1 in the recording, comes out counted from 0, as the game's groups are).
+`--trim` cuts the silence before the voice starts (a cry has to come with the move) and after it ends.
 """
 
 import re
@@ -43,6 +44,20 @@ def bass_boost(x, sr, amount=0.2, corner=220):
     return x + amount * low
 
 
+def trim_silence(x, sr, lead=0.04, tail=0.15, rel_db=-34):
+    """Cut the silence before the voice (keeping `lead` seconds) and after it (keeping `tail`, faded out)."""
+    window = int(sr * 0.02)
+    env = np.sqrt(np.convolve(x * x, np.ones(window) / window, "same"))
+    loud = np.nonzero(env > env.max() * 10 ** (rel_db / 20))[0]
+    start = max(loud[0] / sr - lead, 0.0)
+    end = min(loud[-1] / sr + tail, len(x) / sr)
+    y = x[int(start * sr) : int(end * sr)].copy()
+    fade = min(int(0.08 * sr), len(y) // 4)
+    if fade:
+        y[-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)
+    return y
+
+
 def main():
     src, dst, prefix = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
     bass = float(sys.argv[sys.argv.index("--bass") + 1]) if "--bass" in sys.argv else 0.2
@@ -54,6 +69,8 @@ def main():
         name = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
         sr, x = chiptune.load(f)
         x = denoise(x, sr)
+        if "--trim" in sys.argv:
+            x = trim_silence(x, sr)
         x = bass_boost(x, sr, bass)
         y = chiptune.chiptune(x, sr, **chiptune.STYLES["crunch"])
         y = loudness.apply_gain(y, target - loudness.loudness_db(y, chiptune.OUT_RATE))
