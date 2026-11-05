@@ -1,4 +1,9 @@
 /target
+/dist
 /tools/previews/
 /installer/Output/
 /installer/dxc/
+/dist/
+/.direnv/
+__pycache__/
+/AGENTS.md

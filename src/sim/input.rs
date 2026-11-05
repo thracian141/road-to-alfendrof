@@ -16,6 +16,12 @@ impl Input {
     /// Q and E: roll left or right (on the ground or in the air).
     pub const ROLL_LEFT: u16 = 1 << 8;
     pub const ROLL_RIGHT: u16 = 1 << 9;
+    /// Ready to start, on the screen before a match; the fight itself ignores it.
+    pub const READY: u16 = 1 << 10;
+    /// The player has the pause menu open: they are not playing (the fight ignores it; the screen says so).
+    pub const AWAY: u16 = 1 << 11;
+    /// The player gives up: the match is over and they lose.
+    pub const SURRENDER: u16 = 1 << 12;
 
     pub fn has(self, flag: u16) -> bool {
         self.0 & flag != 0

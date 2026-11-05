@@ -19,12 +19,24 @@ use super::stun;
 use super::transport::{GameSocket, Packet, Transport};
 use super::upnp::{self, Mapping};
 
+/// The longest username, and which characters one may have.
+pub const MAX_NAME: usize = 14;
+
+pub fn name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == ' ' || c == '_' || c == '-'
+}
+
+/// A username as it is kept and shown: allowed characters only, trimmed, not too long.
+pub fn clean_name(name: &str) -> String {
+    name.chars().filter(|c| name_char(*c)).take(MAX_NAME).collect::<String>().trim().to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LobbyMsg {
     /// "Play with me." `nonce` decides who is player 0 if two invitations cross.
-    Invite { build: u32, nonce: u64 },
+    Invite { build: u32, nonce: u64, name: String },
     /// My fighter (roster index) and whether it's locked in. Also the answer to an invitation.
-    Pick { build: u32, index: u8, ready: bool, player: u8 },
+    Pick { build: u32, index: u8, ready: bool, player: u8, name: String },
     Decline,
     Leave,
 }
@@ -67,6 +79,10 @@ pub struct Lobby {
     pub public: Option<SocketAddr>,
     pub mapping: Mapping,
     pub stage: Stage,
+    /// My username (empty: none), sent with the invitation and the pick.
+    name: String,
+    /// The other player's username, once they have sent it.
+    pub peer_name: String,
     player: usize,
     mine: (u8, bool),
     theirs: Option<(u8, bool)>,
@@ -105,6 +121,8 @@ impl Lobby {
             public: None,
             mapping: if with_router { Mapping::Working } else { Mapping::Unavailable("off".into()) },
             stage: Stage::Idle,
+            name: String::new(),
+            peer_name: String::new(),
             player: 0,
             mine: (0, false),
             theirs: None,
@@ -115,6 +133,23 @@ impl Lobby {
 
     pub fn port(&self) -> u16 {
         self.transport.port()
+    }
+
+    /// Set the username sent to the other player.
+    pub fn set_name(&mut self, name: &str) {
+        let name = clean_name(name);
+        if self.name != name {
+            self.name = name;
+        }
+    }
+
+    /// Whether `addr` is this very game: its public address, or its port on this machine (the loopback or the LAN address).
+    pub fn is_own_address(&self, addr: SocketAddr) -> bool {
+        if self.public == Some(addr) {
+            return true;
+        }
+        let here = addr.ip().is_loopback() || addr.ip().is_unspecified() || matches!((addr.ip(), upnp::lan_ip()), (std::net::IpAddr::V4(a), Some(b)) if a == b);
+        here && addr.port() == self.port()
     }
 
     /// Invite a friend by the address they gave you.
@@ -183,11 +218,11 @@ impl Lobby {
         if self.last_send.elapsed() >= Duration::from_millis(300) {
             match self.stage {
                 Stage::Inviting(to) => {
-                    self.transport.send_lobby(&LobbyMsg::Invite { build: self.build, nonce: self.nonce }, to);
+                    self.transport.send_lobby(&LobbyMsg::Invite { build: self.build, nonce: self.nonce, name: self.name.clone() }, to);
                     self.last_send = Instant::now();
                 }
                 Stage::Picking(peer) => {
-                    self.transport.send_lobby(&LobbyMsg::Pick { build: self.build, index: self.mine.0, ready: self.mine.1, player: self.player as u8 }, peer);
+                    self.transport.send_lobby(&LobbyMsg::Pick { build: self.build, index: self.mine.0, ready: self.mine.1, player: self.player as u8, name: self.name.clone() }, peer);
                     self.last_send = Instant::now();
                 }
                 _ => {}
@@ -224,7 +259,7 @@ impl Lobby {
 
     fn on_message(&mut self, from: SocketAddr, msg: LobbyMsg, events: &mut Vec<Event>) {
         match msg {
-            LobbyMsg::Invite { build, nonce } => {
+            LobbyMsg::Invite { build, nonce, name } => {
                 if build != self.build {
                     self.transport.send_lobby(&LobbyMsg::Decline, from);
                     events.push(Event::BuildMismatch);
@@ -233,11 +268,13 @@ impl Lobby {
                 match self.stage {
                     Stage::Idle => {
                         self.stage = Stage::Invited(from);
+                        self.peer_name = clean_name(&name);
                         events.push(Event::Invited(from));
                     }
                     // both invited each other: that counts as accepted; the higher number is player 0
-                    Stage::Inviting(to) if to == from => {
+                    Stage::Inviting(to) if same_peer(to, from) => {
                         self.player = if self.nonce > nonce { 0 } else { 1 };
+                        self.peer_name = clean_name(&name);
                         self.stage = Stage::Picking(from);
                         self.theirs = None;
                         self.mine.1 = false;
@@ -245,18 +282,19 @@ impl Lobby {
                         self.last_send = Instant::now() - Duration::from_secs(10);
                         events.push(Event::Picking { player: self.player });
                     }
-                    Stage::Invited(a) | Stage::Picking(a) if a == from => {}
+                    Stage::Invited(a) | Stage::Picking(a) if a == from => self.peer_name = clean_name(&name),
                     _ => self.transport.send_lobby(&LobbyMsg::Decline, from),
                 }
             }
-            LobbyMsg::Pick { build, index, ready, player } => {
+            LobbyMsg::Pick { build, index, ready, player, name } => {
                 if build != self.build {
                     return;
                 }
                 match self.stage {
                     // the answer to my invitation (their pick says which player they are, so crossed invitations can't disagree)
-                    Stage::Inviting(to) if to == from => {
+                    Stage::Inviting(to) if same_peer(to, from) => {
                         self.player = 1 - (player as usize).min(1);
+                        self.peer_name = clean_name(&name);
                         self.stage = Stage::Picking(from);
                         self.theirs = Some((index, ready));
                         self.mine.1 = false;
@@ -265,6 +303,7 @@ impl Lobby {
                         events.push(Event::PeerPicked { index, ready });
                     }
                     Stage::Picking(peer) if peer == from => {
+                        self.peer_name = clean_name(&name);
                         if self.theirs != Some((index, ready)) {
                             events.push(Event::PeerPicked { index, ready });
                         }
@@ -298,9 +337,23 @@ impl Lobby {
             Stage::Picking(p) => p,
             _ => panic!("into_game outside the pick stage"),
         };
-        let last = LobbyMsg::Pick { build: self.build, index: self.mine.0, ready: true, player: self.player as u8 };
+        let last = LobbyMsg::Pick { build: self.build, index: self.mine.0, ready: true, player: self.player as u8, name: self.name.clone() };
         (self.transport.into_game_socket_repeating(Some((last, peer))), peer, self.player)
     }
+}
+
+/// Whether a packet from `from` is from the friend I invited at `to`. The address a friend's router shows me can
+/// differ from the one in their code by the port (it picks one per destination), so on the public internet the same
+/// address will do; on a local network and on this machine the port tells two games apart.
+fn same_peer(to: SocketAddr, from: SocketAddr) -> bool {
+    if to == from {
+        return true;
+    }
+    let local = |ip: std::net::IpAddr| match ip {
+        std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+    };
+    to.ip() == from.ip() && !local(to.ip())
 }
 
 /// A fingerprint of everything both sides must share (version and character files).
@@ -336,6 +389,26 @@ mod tests {
     }
 
     #[test]
+    fn a_game_knows_its_own_address() {
+        let a = Lobby::new(0, 1, false).unwrap();
+        let own: SocketAddr = format!("127.0.0.1:{}", a.port()).parse().unwrap();
+        assert!(a.is_own_address(own));
+        let other: SocketAddr = format!("127.0.0.1:{}", a.port().wrapping_add(1)).parse().unwrap();
+        assert!(!a.is_own_address(other));
+        assert!(!a.is_own_address("203.0.113.5:7777".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_friend_on_the_internet_is_the_same_whatever_port_their_router_shows() {
+        let code: SocketAddr = "203.0.113.5:7777".parse().unwrap();
+        assert!(same_peer(code, "203.0.113.5:41000".parse().unwrap()));
+        assert!(!same_peer(code, "203.0.113.6:7777".parse().unwrap()));
+        // two games on one machine or one network are told apart by their ports
+        assert!(!same_peer("127.0.0.1:7777".parse().unwrap(), "127.0.0.1:7778".parse().unwrap()));
+        assert!(!same_peer("192.168.1.5:7777".parse().unwrap(), "192.168.1.5:7778".parse().unwrap()));
+    }
+
+    #[test]
     fn an_invitation_is_accepted_and_both_pick_fighters() {
         let (mut a, mut b, _addr_a, addr_b) = two();
         let (mut ea, mut eb) = (Vec::new(), Vec::new());
@@ -351,6 +424,33 @@ mod tests {
         let ready = |es: &[Event]| es.iter().find_map(|e| if let Event::Ready { player, mine, theirs, .. } = e { Some((*player, *mine, *theirs)) } else { None });
         assert_eq!(ready(&ea), Some((0, 2, 4)));
         assert_eq!(ready(&eb), Some((1, 4, 2)));
+    }
+
+    #[test]
+    fn usernames_travel_with_the_invitation_and_the_pick() {
+        let (mut a, mut b, _addr_a, addr_b) = two();
+        let (mut ea, mut eb) = (Vec::new(), Vec::new());
+        a.set_name("Ann the Great");
+        b.set_name("  Bo<b>  ");
+        a.invite(addr_b);
+        pump(&mut a, &mut b, &mut ea, &mut eb, |_, eb| eb.iter().any(|e| matches!(e, Event::Invited(_))));
+        assert_eq!(b.peer_name, "Ann the Great", "the invited side knows who asks");
+        b.accept();
+        pump(&mut a, &mut b, &mut ea, &mut eb, |ea, _| ea.iter().any(|e| matches!(e, Event::PeerPicked { .. })));
+        assert_eq!(a.peer_name, "Bob", "the other side learns the answerer's name, cleaned of odd characters");
+    }
+
+    #[test]
+    fn accepting_by_inviting_back_starts_the_pick_on_both_sides() {
+        let (mut a, mut b, addr_a, addr_b) = two();
+        let (mut ea, mut eb) = (Vec::new(), Vec::new());
+        a.invite(addr_b);
+        pump(&mut a, &mut b, &mut ea, &mut eb, |_, eb| eb.iter().any(|e| matches!(e, Event::Invited(_))));
+        // what the Online screen does on accept: their code goes in the field and Enter is pressed
+        b.invite(addr_a);
+        pump(&mut a, &mut b, &mut ea, &mut eb, |ea, eb| ea.iter().any(|e| matches!(e, Event::Picking { .. })) && eb.iter().any(|e| matches!(e, Event::Picking { .. })));
+        let player = |es: &[Event]| es.iter().find_map(|e| if let Event::Picking { player } = e { Some(*player) } else { None });
+        assert_ne!(player(&ea), player(&eb));
     }
 
     #[test]

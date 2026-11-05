@@ -1,6 +1,6 @@
 [package]
 name = "t2f"
-version = "0.1.3"
+version = "0.1.16"
 edition = "2021"
 description = "Road to Alfendrof"
 default-run = "t2f"
@@ -33,10 +33,14 @@ bevy = { version = "0.20", default-features = false, features = [
     "std",
     "multi_threaded",
     "bevy_winit",
+    # Linux window backends are opt-in when Bevy's defaults are disabled.
+    "x11",
+    "wayland",
     "default_font",
     "2d_bevy_render",
     "bevy_audio",
     "bevy_gilrs",
+    "wav", # the sound effects in assets/sfx
 ] }
 ggrs = { version = "0.13", features = ["sync-send"] }
 serde = { version = "1", features = ["derive"] }
@@ -46,6 +50,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 bincode = "1"
 igd-next = "0.18.0"
 arboard = "3"
+
+# Only used on Windows, to look for Vulkan graphics cards before the game starts (see src/vulkan.rs).
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "vulkan"] }
 
 [features]
 # Faster incremental builds during development: `cargo run --features dev`

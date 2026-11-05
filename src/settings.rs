@@ -73,14 +73,18 @@ impl Display {
 pub struct Settings {
     /// 0 to 10.
     pub music_volume: u8,
+    /// 0 to 10: hits, blocks and whooshes in a fight.
+    pub sfx_volume: u8,
     pub display: Display,
+    /// The name shown in front of your fighter's, and sent to a friend with an invitation (empty: none).
+    pub username: String,
     /// One key per entry of `ACTIONS`.
     pub keys: [KeyCode; ACTIONS.len()],
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { music_volume: 7, display: Display::Windowed, keys: ACTIONS.map(|(_, _, key)| key) }
+        Settings { music_volume: 7, sfx_volume: 8, display: Display::Windowed, username: String::new(), keys: ACTIONS.map(|(_, _, key)| key) }
     }
 }
 
@@ -90,6 +94,10 @@ impl Settings {
     /// The volume to play music at (squared, so the steps sound even).
     pub fn music_gain(&self) -> f32 {
         (self.music_volume as f32 / Self::MAX_VOLUME as f32).powi(2)
+    }
+
+    pub fn sfx_gain(&self) -> f32 {
+        (self.sfx_volume as f32 / Self::MAX_VOLUME as f32).powi(2)
     }
 
     pub fn key(&self, flag: u16) -> KeyCode {
@@ -121,8 +129,18 @@ impl Settings {
 #[derive(Serialize, Deserialize)]
 struct Saved {
     music_volume: u8,
+    /// Missing in files saved before sound effects existed.
+    #[serde(default = "default_sfx_volume")]
+    sfx_volume: u8,
     display: Display,
+    /// Missing in files saved before usernames existed.
+    #[serde(default)]
+    username: String,
     keys: Vec<(String, String)>,
+}
+
+fn default_sfx_volume() -> u8 {
+    Settings::default().sfx_volume
 }
 
 fn settings_path() -> PathBuf {
@@ -148,7 +166,9 @@ pub fn load() -> Settings {
         }
     };
     settings.music_volume = saved.music_volume.min(Settings::MAX_VOLUME);
+    settings.sfx_volume = saved.sfx_volume.min(Settings::MAX_VOLUME);
     settings.display = saved.display;
+    settings.username = t2f::net::lobby::clean_name(&saved.username);
     for (action, key) in saved.keys {
         let i = ACTIONS.iter().position(|a| a.0 == action);
         let key = BINDABLE.iter().copied().find(|k| format!("{k:?}") == key);
@@ -162,7 +182,9 @@ pub fn load() -> Settings {
 fn save(settings: &Settings) {
     let saved = Saved {
         music_volume: settings.music_volume,
+        sfx_volume: settings.sfx_volume,
         display: settings.display,
+        username: settings.username.clone(),
         keys: ACTIONS.iter().zip(settings.keys).map(|(a, k)| (a.0.to_string(), format!("{k:?}"))).collect(),
     };
     let path = settings_path();
@@ -184,7 +206,7 @@ pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(load())
-            .add_systems(Update, (toggle_fullscreen, apply_settings, fit_fullscreen_scale).chain());
+            .add_systems(Update, (toggle_fullscreen, apply_settings, fit_window_scale).chain());
     }
 }
 
@@ -216,13 +238,15 @@ fn apply_settings(settings: Res<Settings>, mut window: Single<&mut Window, With<
             window.resolution.set(crate::WINDOW_W, crate::WINDOW_H);
         }
     }
+    if last.is_none() && mode == WindowMode::Windowed {
+        window.set_maximized(true);
+    }
     *last = Some(settings.clone());
 }
 
-/// Fullscreen, text is drawn at the screen's own scale (the pixel-art view times however much it is
-/// enlarged) instead of being made for the 3x window and stretched.
-fn fit_fullscreen_scale(mut resized: MessageReader<WindowResized>, mut window: Single<&mut Window, With<PrimaryWindow>>) {
-    if resized.read().last().is_none() || window.mode == WindowMode::Windowed {
+/// Draw text at the window's current pixel scale, including maximized windowed mode.
+fn fit_window_scale(mut resized: MessageReader<WindowResized>, mut window: Single<&mut Window, With<PrimaryWindow>>) {
+    if resized.read().last().is_none() {
         return;
     }
     let (w, h) = (window.physical_width() as f32, window.physical_height() as f32);
