@@ -61,6 +61,7 @@ pub enum Mode {
     #[default]
     VsCpu,
     LocalVersus,
+    LocalTeams,
     Online,
 }
 
@@ -75,7 +76,7 @@ pub struct Stages(pub Vec<StageData>);
 /// What was picked in the menus.
 #[derive(Resource, Default)]
 pub struct Selection {
-    pub chars: [usize; 2],
+    pub chars: [usize; 4],
     pub stage: usize,
 }
 
@@ -245,7 +246,7 @@ fn dev_screenshot(
 
 /// Controllers keep their player slots when another controller disconnects.
 #[derive(Resource, Default)]
-struct ControllerSlots([Option<Entity>; 2]);
+struct ControllerSlots([Option<Entity>; 4]);
 
 fn assign_controllers(pads: Query<Entity, With<Gamepad>>, mut slots: ResMut<ControllerSlots>) {
     for slot in &mut slots.0 {
@@ -385,7 +386,7 @@ fn main() {
     if dev.fight {
         // keep a bad index from crashing
         let last = app.world().resource::<Roster>().0.len() - 1;
-        app.insert_resource(Selection { chars: dev.picks.map(|p| p.min(last)), stage: 0 });
+        app.insert_resource(Selection { chars: [dev.picks[0].min(last), dev.picks[1].min(last), 0, 0], stage: 0 });
         app.insert_state(AppState::Fight);
     } else if dev.online {
         app.insert_resource(Mode::Online);
@@ -426,8 +427,9 @@ fn spawn_fight(
     selection: Res<Selection>,
     asset_server: Res<AssetServer>,
     dev: Res<DevOptions>,
+    mode: Res<Mode>,
 ) {
-    *sim = fresh_sim(&roster, &selection);
+    *sim = fresh_sim(&roster, &selection, *mode);
     if dev.spread {
         sim.0.fighters[0].x = -380 * PX;
         sim.0.fighters[1].x = 380 * PX;
@@ -443,20 +445,21 @@ fn spawn_fight(
     commands
         .spawn((HudRoot, scoped.clone(), Transform::default(), Visibility::default()))
         .with_children(|hud| {
-            for side in 0..2usize {
-                let dir = if side == 0 { -1.0 } else { 1.0 };
+            for side in 0..sim.0.fighters.len() {
+                let dir = if side % 2 == 0 { -1.0 } else { 1.0 };
                 let mid = dir * (BAR_EDGE - BAR_W / 2.0);
+                let bar_y = BAR_Y - (side / 2) as f32 * 36.0;
                 hud.spawn((
                     Sprite::from_color(Color::srgb(0.15, 0.05, 0.05), Vec2::new(BAR_W + 2.0, BAR_H + 2.0)),
-                    Transform::from_xyz(mid, BAR_Y, 10.0),
+                    Transform::from_xyz(mid, bar_y, 10.0),
                 ));
                 hud.spawn((
                     HealthBar(side),
                     Sprite::from_color(Color::srgb(0.95, 0.8, 0.2), Vec2::new(BAR_W, BAR_H)),
-                    Transform::from_xyz(mid, BAR_Y, 10.1),
+                    Transform::from_xyz(mid, bar_y, 10.1),
                 ));
                 // special meter: a thin bar under the health bar
-                let special_y = BAR_Y - BAR_H / 2.0 - 4.0;
+                let special_y = bar_y - BAR_H / 2.0 - 4.0;
                 hud.spawn((
                     Sprite::from_color(Color::srgb(0.1, 0.1, 0.16), Vec2::new(BAR_W + 2.0, 5.0)),
                     Transform::from_xyz(mid, special_y, 10.0),
@@ -472,7 +475,7 @@ fn spawn_fight(
                     hud.spawn((
                         RoundPip(side, n),
                         Sprite::from_color(Color::srgb(0.25, 0.25, 0.3), Vec2::new(6.0, 6.0)),
-                        Transform::from_xyz(x, BAR_Y - 17.0, 10.1),
+                        Transform::from_xyz(x, bar_y - 17.0, 10.1),
                     ));
                 }
                 hud.spawn((
@@ -480,7 +483,7 @@ fn spawn_fight(
                     crate::pixel_font(10.0),
                     TextColor(rgb(roster.0[selection.chars[side]].color)),
                     // long names sit further in so they stay on screen
-                    Transform::from_xyz(dir * (BAR_EDGE - 6.0 - roster.0[selection.chars[side]].name.len() as f32 * 2.8), BAR_Y - 18.0, 10.2),
+                    Transform::from_xyz(dir * (BAR_EDGE - 6.0 - roster.0[selection.chars[side]].name.len() as f32 * 2.8), bar_y - 18.0, 10.2),
                 ));
             }
             hud.spawn((
@@ -526,9 +529,9 @@ fn spawn_fight(
     }
 
     // floor: a repeated tile or two alternating colours, two rows deep so it still reaches the bottom when zoomed out
-    let stage_w = (GameState::STAGE_HALF_WIDTH * 2 / PX) as f32;
+    let stage_w = (sim.0.stage_half_width * 2 / PX) as f32;
     let half = stage_w / 2.0;
-    for row in 0..2 {
+    for row in 0..if sim.0.fighters.len() == 4 { 4 } else { 2 } {
         let mut x = -half + 16.0;
         let mut n = row;
         while x < half {
@@ -551,7 +554,7 @@ fn spawn_fight(
     }
 
     let mut handles = render::FrameHandles::default();
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let c = &roster.0[selection.chars[i]];
         // the crescent appears where the summon's projectile starts
         let lob = c.moves.iter().filter_map(|m| m.projectile.as_ref()).find(|p| p.lob);
@@ -586,7 +589,7 @@ fn spawn_fight(
         let frames = t2f::anim::frames_for(c);
         render::spawn_fighter(&mut commands, &asset_server, &assets_dir(), &mut handles, i, c.sprites.as_deref().unwrap_or(&c.name), rgb(c.color), summon, &effects, &frames, c.special_mark.is_some(), c.whip || c.moves.iter().any(|m| m.rope), c.raven.is_some());
     }
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let c = &roster.0[selection.chars[i]];
         if c.moves.iter().any(|m| m.portal.is_some()) {
             render::spawn_portals(&mut commands, &asset_server, i, c.sprites.as_deref().unwrap_or(&c.name));
@@ -635,8 +638,21 @@ fn step_sim(
     mut info: ResMut<online::OnlineInfo>,
     mut commands: Commands,
 ) {
+    if *mode == Mode::LocalTeams {
+        let mut inputs = [t2f::sim::Input::default(); 4];
+        inputs[0] = settings.read_input(&keys);
+        // Keyboard plus three pads, or four pads; first pad remains player 2.
+        for (slot, player) in [1, 2, 3, 0].into_iter().enumerate() {
+            if let Some(pad) = slots.0[slot].and_then(|entity| gamepads.get(entity).ok()) { inputs[player].0 |= controller_fight_input(pad).0; }
+        }
+        sim.0.step(inputs, sel.chars.map(|i| &roster.0[i]));
+        return;
+    }
     let mut player = settings.read_input(&keys);
-    if let Some(pad) = slots.0[0].and_then(|entity| gamepads.get(entity).ok()) {
+    // In local play the keyboard belongs to player 1 and the first controller
+    // belongs to player 2. A second controller can also control player 1.
+    let player_pad = if *mode == Mode::LocalVersus { 1 } else { 0 };
+    if let Some(pad) = slots.0[player_pad].and_then(|entity| gamepads.get(entity).ok()) {
         player.0 |= controller_fight_input(pad).0;
     }
     player.0 |= dev.hold;
@@ -652,7 +668,7 @@ fn step_sim(
         return;
     }
     let opponent = if *mode == Mode::LocalVersus {
-        slots.0[1].and_then(|entity| gamepads.get(entity).ok()).map(controller_fight_input).unwrap_or_default()
+        slots.0[0].and_then(|entity| gamepads.get(entity).ok()).map(controller_fight_input).unwrap_or_default()
     } else {
         cpu_input_vs(&sim.0, 1, &roster.0[sel.chars[1]], &roster.0[sel.chars[0]])
     };
@@ -681,8 +697,9 @@ fn follow_camera(
     images: Res<Assets<Image>>,
     mut layers: Query<(&ParallaxLayer, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<HudRoot>)>,
 ) {
-    let (a, b) = (sim.0.fighters[0].x as f32 / PX as f32, sim.0.fighters[1].x as f32 / PX as f32);
-    let map_w = (GameState::STAGE_HALF_WIDTH * 2 / PX) as f32;
+    let a = sim.0.fighters.iter().map(|f| f.x).min().unwrap_or(0) as f32 / PX as f32;
+    let b = sim.0.fighters.iter().map(|f| f.x).max().unwrap_or(0) as f32 / PX as f32;
+    let map_w = (sim.0.stage_half_width * 2 / PX) as f32;
     // the camera shows at least VIEW_W x VIEW_H, so a window wider than 16:9 shows more than `width`
     // across; `stretch` is how much, and the zoom is held back so the view never outgrows the map
     let aspect = if window.height() > 0.0 { window.width() / window.height() } else { VIEW_W / VIEW_H };
@@ -740,7 +757,7 @@ fn sync_hud(
     for (SpecialBar(side), mut sprite, mut tf) in &mut specials {
         let frac = s.fighters[*side].meter as f32 / Fighter::METER_MAX as f32;
         let w = BAR_W * frac.clamp(0.0, 1.0);
-        let dir = if *side == 0 { -1.0 } else { 1.0 };
+        let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
         sprite.custom_size = Some(Vec2::new(w, 3.0));
         tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
         // purple while filling, pulsing gold when ready
@@ -754,13 +771,13 @@ fn sync_hud(
     for (HealthBar(side), mut sprite, mut tf) in &mut bars {
         let frac = s.fighters[*side].health.max(0) as f32 / s.fighters[*side].max_health.max(1) as f32;
         let w = BAR_W * frac;
-        let dir = if *side == 0 { -1.0 } else { 1.0 };
+        let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
         sprite.custom_size = Some(Vec2::new(w, BAR_H));
         // bars drain from the centre outwards
         tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
     }
     for (RoundPip(side, n), mut sprite) in &mut pips {
-        let won = s.wins[*side] > *n;
+        let won = s.wins[s.teams[*side] as usize] > *n;
         sprite.color = if won { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.25, 0.25, 0.3) };
     }
     // texts are only written when they change: any write makes Bevy lay the text out again
@@ -779,6 +796,7 @@ fn sync_hud(
             if s.fighters.iter().any(|f| f.health <= 0) { "K.O.".into() } else { "Time!".into() }
         }
         Phase::MatchOver => match s.match_winner() {
+            Some(w) if s.fighters.len() == 4 => format!("Team {} wins!", w + 1),
             Some(w) => format!("{} wins!", name(w)),
             None => "Draw".into(),
         },
@@ -800,7 +818,7 @@ fn draw_debug(sim: Res<Sim>, roster: Res<Roster>, sel: Res<Selection>, debug: Re
         let (x0, y0, x1, y1) = (b[0] as f32 / PX as f32, b[1] as f32 / PX as f32, b[2] as f32 / PX as f32, b[3] as f32 / PX as f32);
         (Vec2::new((x0 + x1) / 2.0, GROUND_Y + (y0 + y1) / 2.0), Vec2::new(x1 - x0, y1 - y0))
     };
-    for i in 0..2 {
+    for i in 0..sim.0.fighters.len() {
         let (c, size) = to_rect(sim.0.hurtbox(i));
         gizmos.rect_2d(Isometry2d::from_translation(c), size, Color::srgb(0.2, 1.0, 0.3));
         if let Some(h) = sim.0.hitbox(i, &roster.0[sel.chars[i]]) {
@@ -831,13 +849,18 @@ fn restart_match(
             commands.remove_resource::<online::NetSession>();
             next.set(AppState::Online);
         } else {
-            *sim = fresh_sim(&roster, &sel);
+            *sim = fresh_sim(&roster, &sel, *mode);
         }
     }
 }
 
 /// New match; each fighter starts with their character's health.
-fn fresh_sim(roster: &Roster, sel: &Selection) -> Sim {
+fn fresh_sim(roster: &Roster, sel: &Selection, mode: Mode) -> Sim {
+    if mode == Mode::LocalTeams {
+        let mut state = GameState::team_match();
+        state.set_health(sel.chars.map(|i| roster.0[i].health.unwrap_or(Fighter::MAX_HEALTH)));
+        return Sim(state);
+    }
     let mut sim = Sim::default();
     sim.0.set_health([0, 1].map(|i| roster.0[sel.chars[i]].health.unwrap_or(Fighter::MAX_HEALTH)));
     sim

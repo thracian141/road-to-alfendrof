@@ -120,7 +120,7 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
     // rows with pictures need more room; long lists of text get smaller
     let with_pictures = items.iter().any(|i| i.portrait.is_some());
     let compact = !with_pictures && items.len() > 6;
-    let spacing = if state == AppState::Title { 18.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 12.0 } else { 22.0 };
+    let spacing = if state == AppState::Title { 14.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 12.0 } else { 22.0 };
     let top = top_override.unwrap_or(if with_pictures { 56.0 } else if compact { 62.0 } else { 40.0 });
     let size = if compact { 8.0 } else { 16.0 };
     for (index, item) in items.into_iter().enumerate() {
@@ -192,8 +192,8 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
         state,
         "",
         "W/S: move   Enter: select   Esc: quit   PAD: D-PAD / STICK, A select, B back",
-        vec![Item::new("vs CPU", white), Item::new("Local 2 players", white), online, Item::new("Options", white)],
-        Some(-27.0),
+        vec![Item::new("vs CPU", white), Item::new("Local 2 players", white), Item::new("2v2 - 4 players", white), online, Item::new("Options", white)],
+        Some(-23.0),
     );
 }
 
@@ -213,8 +213,11 @@ fn spawn_char_select(
     asset_server: Res<AssetServer>,
 ) {
     picking.0 = 0;
+    if *mode == Mode::LocalTeams {
+        spawn_text(&mut commands, AppState::CharSelect, "P1 KEYBOARD / PAD4   P2 PAD1   P3 PAD2   P4 PAD3   TEAMS: 1+3 / 2+4".into(), 7.0, Color::WHITE, -78.0);
+    }
     if *mode == Mode::LocalVersus {
-        spawn_text(&mut commands, AppState::CharSelect, "P1: FIRST CONTROLLER + KEYBOARD   P2: SECOND CONTROLLER".into(), 7.0, Color::srgb(0.7, 0.7, 0.8), -78.0);
+        spawn_text(&mut commands, AppState::CharSelect, "P1: KEYBOARD / PAD 2    P2: PAD 1".into(), 7.0, Color::srgb(0.7, 0.7, 0.8), -78.0);
     }
     let items = roster
         .0
@@ -243,9 +246,11 @@ fn spawn_char_select(
 }
 
 fn pick_title(player: usize, mode: Mode) -> String {
+    if mode == Mode::LocalTeams { return format!("P{} - Team {}: choose fighter", player + 1, player % 2 + 1); }
     match (player, mode) {
         (0, Mode::LocalVersus) => "Player 1: choose your fighter".into(),
         (0, _) => "Choose your fighter".into(),
+        (_, Mode::LocalTeams) => unreachable!(),
         (_, Mode::LocalVersus) => "Player 2: choose your fighter".into(),
         (_, Mode::VsCpu) => "Choose the CPU's fighter".into(),
         (_, Mode::Online) => "Choose your fighter".into(),
@@ -363,6 +368,10 @@ fn title_confirm(
                 next.set(AppState::CharSelect);
             }
             2 => {
+                *mode = Mode::LocalTeams;
+                next.set(AppState::CharSelect);
+            }
+            3 => {
                 *mode = Mode::Online;
                 next.set(AppState::Online);
             }
@@ -401,17 +410,17 @@ fn char_confirm(
         return;
     }
     if back_pressed(&keys.0) {
-        if picking.0 == 1 {
-            picking.0 = 0;
-            header.0 = pick_title(0, *mode);
+        if picking.0 > 0 {
+            picking.0 -= 1;
+            header.0 = pick_title(picking.0, *mode);
         } else {
             next.set(AppState::Title);
         }
     } else if confirm_pressed(&keys.0) {
         sel.chars[picking.0] = menu.cursor;
-        if picking.0 == 0 {
-            picking.0 = 1;
-            header.0 = pick_title(1, *mode);
+        if picking.0 + 1 < if *mode == Mode::LocalTeams { 4 } else { 2 } {
+            picking.0 += 1;
+            header.0 = pick_title(picking.0, *mode);
             menu.cursor = 0;
         } else if stages.0.len() == 1 {
             // only one stage, so go straight to the fight

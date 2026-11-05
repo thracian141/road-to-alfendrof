@@ -336,7 +336,7 @@ fn futile_tint(c: Color) -> Color {
 /// Place each fighter, face the opponent, and knock them over when KO'd.
 pub fn pose_bodies(sim: Res<Sim>, mut bodies: Query<(&Body, &mut Transform)>) {
     for (Body(i), mut tf) in &mut bodies {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         set_ne!(tf.translation.x, (f.x / PX) as f32);
         set_ne!(tf.translation.y, GROUND_Y + (f.y / PX) as f32);
         tf.scale.x = f.heading as f32;
@@ -352,7 +352,7 @@ pub fn animate_body(
     mut sprites: Query<(&SpriteOf, &mut Sprite)>,
 ) {
     for (SpriteOf(i), mut sprite) in &mut sprites {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let frame = frame_for(f, &roster.0[sel.chars[*i]], speaking(&sim.0, *i), sim.0.frame);
         // while the raven is out, use the body drawing without it on the shoulder
         let mut stem = frame.file_stem();
@@ -390,7 +390,7 @@ pub fn animate_crescent(
     mut crescents: Query<(&CrescentOf, &mut Sprite, &mut Visibility, &mut Transform)>,
 ) {
     for (CrescentOf(i), mut sprite, mut visibility, mut tf) in &mut crescents {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let frame = frame_for(f, &roster.0[sel.chars[*i]], false, sim.0.frame);
         match frame {
             Frame::Summon(n) if n >= 1 => {
@@ -467,7 +467,7 @@ pub fn animate_marks(
     mut marks: Query<(&MarkOf, &mut Sprite)>,
 ) {
     for (MarkOf(i), mut sprite) in &mut marks {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let frame = frame_for(f, data, speaking(&sim.0, *i), sim.0.frame);
         if let Some(image) = handles.0.get(*i).and_then(|m| m.get(&format!("{}_mark", frame.file_stem()))) {
@@ -568,7 +568,7 @@ pub fn animate_ravens(
 /// while the whip lashes out the rest is generated here, a curve of pixels from the hand to the enemy
 /// (or the end of its reach), so it always meets them.
 pub fn animate_whips(
-    mut memory: Local<[Option<LashMemory>; 2]>,
+    mut memory: Local<[Option<LashMemory>; 4]>,
     sim: Res<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
@@ -578,7 +578,7 @@ pub fn animate_whips(
 ) {
     let shift = FRAME_W as f32 / 2.0 - t2f::anim::CENTRE_X as f32;
     for (WhipOf(i), mut sprite, mut visibility) in &mut whips {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let layer = t2f::anim::whip_layer(f, data);
         // lashing pose: no image, the lash is generated instead
@@ -589,7 +589,7 @@ pub fn animate_whips(
             let special = mv.anim == t2f::sim::AnimKind::Summon;
             let hb = if f.aim_low { mv.low_hitbox.unwrap_or(mv.hitbox) } else { mv.hitbox };
             let natural = (hb.x + hb.w + if f.boosted { mv.boost_reach } else { 0 } + mv.assist) as f32;
-            let foe = &sim.0.fighters[1 - *i];
+            let foe = &sim.0.fighters[sim.0.target(*i)];
             let ahead = ((foe.x - f.x) * f.facing) as f32 / PX as f32;
             let tip_fwd = if ahead > 0.0 { (ahead - 6.0).clamp(24.0, natural) } else { natural };
             // height above the feet: the special keeps its fixed high or low line, the others go for the enemy's body
@@ -758,10 +758,10 @@ pub fn animate_bubbles(
     mut texts: Query<(&BubbleText, &mut Text2d)>,
     mut backs: Query<(&BubbleBack, &mut Sprite), Without<BubbleTail>>,
     mut tails: Query<(&BubbleTail, &mut Transform), (Without<BubbleOf>, Without<BubbleText>)>,
-    mut spoken: Local<[Option<usize>; 2]>,
+    mut spoken: Local<[Option<usize>; 4]>,
 ) {
     for (BubbleOf(i), mut tf, mut visibility) in &mut roots {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let attacking = f.state == FighterState::Attack;
         // a line that was written stays up, whole, while what it made (the orb, the knives) is still out
@@ -769,7 +769,7 @@ pub fn animate_bubbles(
         let index = lingering.unwrap_or(f.attack.min(data.moves.len() - 1));
         let mv = &data.moves[index];
         // a writing move says its line (with the enemy's name in it) while it plays
-        let line = mv.say.as_ref().map(|say| say.replace("{enemy}", &roster.0[sel.chars[1 - *i]].name));
+        let line = mv.say.as_ref().map(|say| say.replace("{enemy}", &roster.0[sel.chars[sim.0.target(*i)]].name));
         spoken[*i] = if attacking && line.is_some() { Some(index) } else { lingering };
         // a grab says it while he holds the enemy (after the pull); the others while they wind up
         let grabbing = mv.hits > 1;
@@ -893,8 +893,8 @@ pub fn animate_skill_bar(
         *shown = Default::default();
     }
     let side = net.as_ref().map_or(0, |n| n.local);
-    let f = &sim.0.fighters[side.min(1)];
-    let data = &roster.0[sel.chars[side.min(1)]];
+    let f = &sim.0.fighters[side.min(sim.0.fighters.len() - 1)];
+    let data = &roster.0[sel.chars[side.min(sim.0.fighters.len() - 1)]];
     let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
     let buttons = [Button::Light, Button::Heavy, Button::Special];
     let names = ["light", "heavy", "special"];
@@ -983,7 +983,7 @@ pub fn spawn_portals(commands: &mut Commands, asset_server: &AssetServer, fighte
 /// Open the portal behind her as she steps back, the far one behind the enemy once she is gone, and reach the
 /// hand out of the far one during the grab (holding on if it caught them). Both close once she is out.
 pub fn animate_portals(
-    mut start: Local<[f32; 2]>,
+    mut start: Local<[f32; 4]>,
     sim: Res<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
@@ -992,7 +992,7 @@ pub fn animate_portals(
     mut hands: Query<(&HandOf, &mut Sprite, &mut Transform, &mut Visibility), Without<GateOf>>,
 ) {
     for (GateOf(i, which), mut sprite, mut tf, mut visibility) in &mut gates {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
         let (Some(pd), true) = (mv.portal, f.state == FighterState::Attack) else {
@@ -1026,7 +1026,7 @@ pub fn animate_portals(
         sprite.image = asset_server.load(format!("sprites/{folder}/gate_{}.png", (sim.0.frame / 5) % 2));
     }
     for (HandOf(i), mut sprite, mut tf, mut visibility) in &mut hands {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
         let (Some(x), true) = (f.portal_x, f.state == FighterState::Attack && f.hidden && mv.portal.is_some()) else {
@@ -1050,7 +1050,7 @@ pub fn animate_portals(
 
 /// Spawn the hidden curse drawings for both fighters; whoever is cursed shows them.
 pub fn spawn_curses(commands: &mut Commands, asset_server: &AssetServer) {
-    for fighter in 0..2usize {
+    for fighter in 0..4usize {
         let root = commands
             .spawn((CurseRoot(fighter), DespawnOnExit(AppState::Fight), Transform::from_xyz(0.0, 0.0, 0.8), Visibility::Hidden))
             .id();
@@ -1077,7 +1077,7 @@ pub fn animate_curses(
     mut parts: Query<(&CursePart, &CurseOf, &mut Sprite, &mut Visibility), Without<CurseRoot>>,
 ) {
     for (CurseRoot(i), mut tf, mut visibility) in &mut roots {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         match f.curse {
             Some(c) => {
                 set_ne!(*visibility, Visibility::Inherited);
@@ -1094,7 +1094,7 @@ pub fn animate_curses(
         }
     }
     for (part, CurseOf(i), mut sprite, mut visibility) in &mut parts {
-        let Some(c) = sim.0.fighters[*i].curse else {
+        let Some(c) = sim.0.fighters.get(*i).and_then(|f| f.curse) else {
             set_ne!(*visibility, Visibility::Hidden);
             continue;
         };
@@ -1124,7 +1124,7 @@ pub struct ComboSquare(pub usize, pub usize);
 pub struct BlockIcon(pub usize);
 
 pub fn spawn_combo_ui(commands: &mut Commands, asset_server: &AssetServer) {
-    for fighter in 0..2usize {
+    for fighter in 0..4usize {
         for i in 0..3usize {
             commands.spawn((
                 ComboSquare(fighter, i),
@@ -1152,7 +1152,7 @@ pub fn animate_combo_ui(
     mut icons: Query<(&BlockIcon, &mut Sprite, &mut Transform, &mut Visibility), Without<ComboSquare>>,
 ) {
     for (ComboSquare(i, k), mut sprite, mut tf) in &mut squares {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         set_ne!(tf.translation.x, (f.x / PX) as f32 + (*k as f32 - 1.0) * 9.0);
         let lit = (*k as u8) < f.combo;
         sprite.color = if lit {
@@ -1166,7 +1166,7 @@ pub fn animate_combo_ui(
         };
     }
     for (BlockIcon(i), mut sprite, mut tf, mut visibility) in &mut icons {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let disabled = f.block_disabled > 0;
         // blinks near the end so you can see the guard is coming back
         let blinking_off = f.block_disabled < 40 && (f.block_disabled / 5) % 2 == 0;
@@ -1183,7 +1183,7 @@ pub struct MinionSprite(pub usize, pub usize);
 pub const MINION_SLOTS: usize = 4;
 
 pub fn spawn_minion_sprites(commands: &mut Commands) {
-    for owner in 0..2usize {
+    for owner in 0..4usize {
         for slot in 0..MINION_SLOTS {
             commands.spawn((
                 MinionSprite(owner, slot),
@@ -1210,7 +1210,7 @@ pub fn animate_minions(
         set_ne!(*visibility, Visibility::Inherited);
         let frame = match m.mode {
             _ => {
-                let foe_x = sim.0.fighters[1 - *owner].x;
+                let foe_x = sim.0.fighters[sim.0.target(*owner)].x;
                 if m.bit && m.timer < 8 {
                     4
                 } else if (foe_x - m.x).abs() < 30 * PX {
@@ -1272,7 +1272,7 @@ pub fn animate_scribe_effects(
     mut beams: Query<(&BeamPart, &mut Sprite, &mut Transform, &mut Visibility), (Without<WorryLine>, Without<JesusOf>)>,
 ) {
     for (WorryLine(i, index), mut tf, mut visibility) in &mut worry {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         set_ne!(*visibility, if f.futile > 0 { Visibility::Inherited } else { Visibility::Hidden });
         // three short strokes fanning out above the head, trembling
         let shake = if (sim.0.frame / 4 + *index as u32) % 2 == 0 { 0.0 } else { 1.0 };
@@ -1286,7 +1286,7 @@ pub fn animate_scribe_effects(
         tf.rotation = Quat::from_rotation_z(angle);
     }
     for (JesusOf(i), mut sprite, mut tf, mut visibility) in &mut jesus {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
         match (f.state == FighterState::Attack, mv.beam, f.beam_lock) {
@@ -1309,7 +1309,7 @@ pub fn animate_scribe_effects(
         }
     }
     for (BeamPart(i, core), mut sprite, mut tf, mut visibility) in &mut beams {
-        let f = &sim.0.fighters[*i];
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];
         let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
         let (Some(b), Some(lock)) = (mv.beam, f.beam_lock) else {
