@@ -1,5 +1,5 @@
 //! Title, options, controls, character select and stage select, all driven by one cursor.
-//! Both players' keys work: WASD + F/G or arrows + J/K, Enter and Esc.
+//! Navigate with WASD or arrows, select with Enter, and go back with Escape.
 
 use bevy::prelude::*;
 
@@ -7,6 +7,7 @@ use crate::settings::{self, Display, Settings, ACTIONS};
 use crate::sfx::UiSound;
 use t2f::skills::move_names;
 use bevy::sprite::Anchor;
+use bevy::window::PrimaryWindow;
 use t2f::sim::Button;
 use crate::{AppState, Mode, Roster, Selection, Sim, Stages};
 use t2f::sim::Phase;
@@ -47,6 +48,7 @@ impl Plugin for MenuPlugin {
                     glitch_subtitles.run_if(menu_live),
                     animate_title.run_if(in_state(AppState::Title)),
                     menu_camera.run_if(not(in_state(AppState::Fight))),
+                    fit_menu_art,
                 ),
             );
     }
@@ -117,16 +119,62 @@ impl Item {
 }
 
 pub fn confirm_pressed(keys: &ButtonInput<KeyCode>) -> bool {
-    [KeyCode::Enter, KeyCode::KeyF, KeyCode::KeyJ, KeyCode::Space].iter().any(|&k| keys.just_pressed(k))
+    keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
 }
 
 fn back_pressed(keys: &ButtonInput<KeyCode>) -> bool {
-    [KeyCode::Escape, KeyCode::KeyG, KeyCode::KeyK, KeyCode::Backspace].iter().any(|&k| keys.just_pressed(k))
+    keys.just_pressed(KeyCode::Escape)
 }
 
 /// The box every menu's text sits in, so all screens use the same part of the window: size, and the sprites
 /// (a dark fill, a violet frame) as `(sprite, position)` for the caller to spawn.
 pub const PANEL: Vec2 = Vec2::new(372.0, 204.0);
+
+/// A decorative image that fills the whole visible camera view as the window changes shape.
+#[derive(Component)]
+pub struct FillView;
+
+/// The title tint, anchored to the bottom edge of the visible view.
+#[derive(Component)]
+struct TitleBottomShade;
+
+const TITLE_SHADE_TOP: f32 = -14.0;
+
+fn visible_menu_size(aspect: f32) -> Vec2 {
+    let base = Vec2::new(crate::VIEW_W, crate::VIEW_H);
+    if aspect >= base.x / base.y {
+        Vec2::new(base.y * aspect, base.y)
+    } else {
+        Vec2::new(base.x, base.x / aspect)
+    }
+}
+
+fn fit_menu_art(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut backgrounds: Query<&mut Sprite, (With<FillView>, Without<TitleBottomShade>)>,
+    mut shades: Query<(&mut Sprite, &mut Transform), (With<TitleBottomShade>, Without<FillView>)>,
+) {
+    if window.height() <= 0.0 || window.width() <= 0.0 {
+        return;
+    }
+    let view = visible_menu_size(window.width() / window.height());
+    for mut sprite in &mut backgrounds {
+        if sprite.custom_size != Some(view) {
+            sprite.custom_size = Some(view);
+        }
+    }
+    let bottom = -view.y / 2.0;
+    let shade_size = Vec2::new(view.x, TITLE_SHADE_TOP - bottom);
+    for (mut sprite, mut transform) in &mut shades {
+        if sprite.custom_size != Some(shade_size) {
+            sprite.custom_size = Some(shade_size);
+        }
+        let y = (TITLE_SHADE_TOP + bottom) / 2.0;
+        if transform.translation.y != y {
+            transform.translation.y = y;
+        }
+    }
+}
 
 pub fn panel_parts() -> Vec<(Sprite, Vec3)> {
     let frame = Color::srgb(0.55, 0.42, 0.85);
@@ -150,9 +198,10 @@ pub fn spawn_panel(commands: &mut Commands, state: AppState) {
 }
 
 /// The pixel-art backdrop of the character and stage select.
-fn spawn_backdrop(commands: &mut Commands, state: AppState, asset_server: &AssetServer) {
+pub fn spawn_backdrop(commands: &mut Commands, state: AppState, asset_server: &AssetServer) {
     commands.spawn((
         DespawnOnExit(state),
+        FillView,
         Sprite { image: asset_server.load("backgrounds/select.png"), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
         Transform::from_xyz(0.0, 0.0, -8.0),
     ));
@@ -264,12 +313,12 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     let state = AppState::Title;
     commands.spawn((
         DespawnOnExit(state.clone()),
+        FillView,
         Sprite { image: asset_server.load("backgrounds/galata/near.png"), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
         Transform::from_xyz(0.0, 0.0, -8.0),
     ));
-    // dark band behind the menu so it reads, vignette at the top
-    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.82), Vec2::new(384.0, 96.0)), Transform::from_xyz(0.0, -62.0, 1.0)));
-    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.35), Vec2::new(384.0, 22.0)), Transform::from_xyz(0.0, 105.0, 1.0)));
+    // Keep the menu readable and extend its dark band to the bottom of any window shape.
+    commands.spawn((DespawnOnExit(state.clone()), TitleBottomShade, Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.82), Vec2::new(384.0, 94.0)), Transform::from_xyz(0.0, -61.0, 1.0)));
     commands.spawn((
         DespawnOnExit(state.clone()),
         TitleLogo,
@@ -289,9 +338,9 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     commands.entity(credit).insert(Transform::from_xyz(0.0, -104.0, 5.0));
     let tagline = spawn_text(&mut commands, state.clone(), "A T2SSR Brawl".into(), 9.0, Color::srgb(0.98, 0.92, 0.72), 8.0);
     commands.entity(tagline).insert(Transform::from_xyz(0.0, 8.0, 5.0));
-    // the version, small in the bottom right corner
-    let version = spawn_text(&mut commands, state.clone(), format!("v{}", env!("CARGO_PKG_VERSION")), 8.0, Color::srgba(0.85, 0.85, 0.95, 0.75), -102.0);
-    commands.entity(version).insert((Transform::from_xyz(172.0, -102.0, 5.0), bevy::sprite::Anchor::CENTER_RIGHT));
+    // Keep the version above the logo, clear of the footer's controls and sound credits.
+    let version = spawn_text(&mut commands, state.clone(), format!("v{}", env!("CARGO_PKG_VERSION")), 8.0, Color::srgb(0.12, 0.08, 0.22), 96.0);
+    commands.entity(version).insert((Transform::from_xyz(172.0, 96.0, 5.0), bevy::sprite::Anchor::CENTER_RIGHT));
 
     let white = Color::WHITE;
     let online = Item::new("Online", white);
@@ -300,7 +349,7 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
         &mut menu,
         state,
         "",
-        "W/S or Up/Down: move    F / J / Enter: select    Esc: quit",
+        "W/S or Up/Down: move    Enter: select    Esc: quit",
         vec![Item::new("vs CPU", white), online, Item::new("Options", white)],
         Some(-30.0),
     );
@@ -343,7 +392,7 @@ fn spawn_char_select(
     menu.per_page = 1;
     let header = spawn_text(&mut commands, state.clone(), pick_title(0, *mode), 16.0, Color::srgb(1.0, 0.9, 0.4), 90.0);
     commands.entity(header).insert(Header);
-    spawn_text(&mut commands, state.clone(), "A/D: turn    F / J / Enter: pick    G / K / Esc: back".into(), 9.0, Color::srgb(0.6, 0.6, 0.7), -92.0);
+    spawn_text(&mut commands, state.clone(), "A/D or Left/Right: turn    Enter: pick    Esc: back".into(), 9.0, Color::srgb(0.6, 0.6, 0.7), -92.0);
     for (index, c) in roster.0.iter().enumerate() {
         // portraits/<sprite folder>.png, if it exists
         let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
@@ -545,7 +594,7 @@ fn spawn_stage_select(mut commands: Commands, mut menu: ResMut<Menu>, stages: Re
         &mut menu,
         AppState::StageSelect,
         "Choose a stage",
-        "W/S or Up/Down: move    F / J / Enter: fight    G / K / Esc: back",
+        "W/S or Up/Down: move    Enter: fight    Esc: back",
         items,
         None,
     );
@@ -671,7 +720,7 @@ fn title_confirm(
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if back_pressed(&keys) && keys.just_pressed(KeyCode::Escape) {
+    if back_pressed(&keys) {
         exit.write(AppExit::Success);
     } else if confirm_pressed(&keys) {
         match menu.cursor {
@@ -777,7 +826,7 @@ fn build_options(commands: &mut Commands, menu: &mut Menu, state: AppState, sett
         menu,
         state,
         "Options",
-        "W/S: move    A/D or Left/Right: change    F / J / Enter: select    Esc: back",
+        "W/S or Up/Down: move    A/D or Left/Right: change    Enter: select    Esc: back",
         items,
         None,
     );
@@ -866,7 +915,7 @@ fn build_controls(commands: &mut Commands, menu: &mut Menu, state: AppState, set
         menu,
         state,
         "Controls",
-        "F / J / Enter: change, then press the new key    Esc: back",
+        "Enter: change, then press the new key    Esc: back",
         items,
         None,
     );
@@ -1027,7 +1076,7 @@ fn sync_pause(
         Pause::Main => {
             let title = if *mode == Mode::Online { "Paused (the match goes on)" } else { "Paused" };
             let items = vec![Item::new("Resume", Color::WHITE), Item::new("Options", Color::WHITE), Item::new("Surrender", red)];
-            spawn_menu(&mut commands, &mut menu, AppState::Overlay, title, "W/S or Up/Down: move    F / J / Enter: select    Esc: resume", items, None);
+            spawn_menu(&mut commands, &mut menu, AppState::Overlay, title, "W/S or Up/Down: move    Enter: select    Esc: resume", items, None);
         }
         Pause::Options => build_options(&mut commands, &mut menu, AppState::Overlay, &settings),
         Pause::Controls => build_controls(&mut commands, &mut menu, AppState::Overlay, &settings),
@@ -1067,5 +1116,76 @@ fn menu_camera(mut cam: Single<(&mut Transform, &mut Projection), With<Camera2d>
                 ortho.scale = 1.0;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_confirmation_and_back_use_enter_and_escape() {
+        for key in [KeyCode::Enter, KeyCode::NumpadEnter] {
+            let mut keys = ButtonInput::default();
+            keys.press(key);
+            assert!(confirm_pressed(&keys));
+            assert!(!back_pressed(&keys));
+        }
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::Escape);
+        assert!(back_pressed(&keys));
+        assert!(!confirm_pressed(&keys));
+
+        for key in [KeyCode::KeyF, KeyCode::KeyG, KeyCode::KeyJ, KeyCode::KeyK, KeyCode::Space, KeyCode::Backspace] {
+            let mut keys = ButtonInput::default();
+            keys.press(key);
+            assert!(!confirm_pressed(&keys));
+            assert!(!back_pressed(&keys));
+        }
+    }
+
+    #[test]
+    fn horizontal_navigation_accepts_wasd_and_arrows() {
+        for (key, expected) in [(KeyCode::KeyA, -1), (KeyCode::ArrowLeft, -1), (KeyCode::KeyD, 1), (KeyCode::ArrowRight, 1)] {
+            let mut keys = ButtonInput::default();
+            keys.press(key);
+            assert_eq!(left_right(&keys), expected);
+        }
+    }
+
+    #[test]
+    fn vertical_keys_move_the_menu_cursor() {
+        for (key, expected) in [(KeyCode::KeyW, 0), (KeyCode::ArrowUp, 0), (KeyCode::KeyS, 2), (KeyCode::ArrowDown, 2)] {
+            let mut app = App::new();
+            app.init_resource::<ButtonInput<KeyCode>>()
+                .insert_resource(Menu { cursor: 1, len: 3, per_page: 3 })
+                .init_resource::<Rebinding>()
+                .add_message::<UiSound>()
+                .add_systems(Update, menu_nav);
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+            app.update();
+            assert_eq!(app.world().resource::<Menu>().cursor, expected);
+        }
+    }
+
+    #[test]
+    fn escape_opens_pause_and_enter_resumes() {
+        let mut app = App::new();
+        let mut sim = Sim::default();
+        sim.0.phase = Phase::Fighting;
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Pause>()
+            .init_resource::<Menu>()
+            .init_resource::<Surrendering>()
+            .insert_resource(sim)
+            .add_systems(Update, pause_main);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
+        app.update();
+        assert_eq!(*app.world().resource::<Pause>(), Pause::Main);
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.clear();
+        keys.press(KeyCode::Enter);
+        app.update();
+        assert_eq!(*app.world().resource::<Pause>(), Pause::Closed);
     }
 }
