@@ -193,7 +193,8 @@ pub fn panel_parts() -> Vec<(Sprite, Vec3)> {
 }
 
 pub fn spawn_panel(commands: &mut Commands, state: AppState) {
-    for (sprite, at) in panel_parts() {
+    for (mut sprite, at) in panel_parts() {
+        if state == AppState::Overlay && at.z == 1.0 { sprite.color = sprite.color.with_alpha(1.0); }
         commands.spawn((DespawnOnExit(state.clone()), sprite, Transform::from_translation(at)));
     }
 }
@@ -270,7 +271,7 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
     let with_pictures = items.iter().any(|i| i.portrait.is_some());
     let compact = !with_pictures && items.len() > 6;
     menu.per_page = if with_pictures { 4 } else { items.len().max(1) };
-    let spacing = if state == AppState::Title { 16.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 10.0 } else { 22.0 };
+    let spacing = if state == AppState::Title { 16.0 } else if with_pictures { 35.0 } else if compact { 10.0 } else { 22.0 };
     let top = top_override.unwrap_or(if with_pictures { 56.0 } else if compact { 62.0 } else { 40.0 });
     let size = if state == AppState::Title { 12.0 } else if compact { 8.0 } else { 16.0 };
     for (index, item) in items.into_iter().enumerate() {
@@ -388,12 +389,6 @@ fn spawn_char_select(
     asset_server: Res<AssetServer>,
 ) {
     picking.0 = 0;
-    if *mode == Mode::LocalTeams {
-        spawn_text(&mut commands, AppState::CharSelect, "P1 KEYBOARD / PAD4   P2 PAD1   P3 PAD2   P4 PAD3   TEAMS: 1+3 / 2+4".into(), 7.0, Color::WHITE, -78.0);
-    }
-    if *mode == Mode::LocalVersus {
-        spawn_text(&mut commands, AppState::CharSelect, "P1: KEYBOARD / PAD 2    P2: PAD 1".into(), 7.0, Color::srgb(0.7, 0.7, 0.8), -78.0);
-    }
     let state = AppState::CharSelect;
     spawn_backdrop(&mut commands, state.clone(), &asset_server);
     spawn_panel(&mut commands, state.clone());
@@ -403,7 +398,8 @@ fn spawn_char_select(
     menu.per_page = 1;
     let header = spawn_text(&mut commands, state.clone(), pick_title(0, *mode), 16.0, Color::srgb(1.0, 0.9, 0.4), 90.0);
     commands.entity(header).insert(Header);
-    spawn_text(&mut commands, state.clone(), "A/D or Left/Right: turn    Enter: pick    Esc: back".into(), 9.0, Color::srgb(0.6, 0.6, 0.7), -92.0);
+    let footer = spawn_text(&mut commands, state.clone(), "A/D or Left/Right: turn    Enter: pick    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -99.0);
+    commands.entity(footer).insert(Anchor::BOTTOM_CENTER);
     for (index, c) in roster.0.iter().enumerate() {
         // portraits/<sprite folder>.png, if it exists
         let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
@@ -533,6 +529,14 @@ fn wrap(text: &str, width: usize) -> String {
     out
 }
 
+fn skill_blurb(text: &str) -> String {
+    let wrapped = wrap(text, 52);
+    let all: Vec<_> = wrapped.lines().collect();
+    let mut lines: Vec<String> = all.iter().take(2).map(|line| line.chars().take(52).collect()).collect();
+    if all.len() > 2 { if let Some(last) = lines.last_mut() { *last = last.chars().take(49).collect::<String>() + "..."; } }
+    lines.join("\n")
+}
+
 /// The name, subtitle, and each button's icon, moves and what it does, for the fighter in the middle.
 fn carousel_info(
     mut commands: Commands,
@@ -564,19 +568,16 @@ fn carousel_info(
             }
         }
         for (row, (button, icon)) in [(Button::Light, "light"), (Button::Heavy, "heavy"), (Button::Special, "special")].into_iter().enumerate() {
-            let top = 2.0 - row as f32 * 30.0;
+            let top = 6.0 - row as f32 * 28.0;
             ui.spawn((
                 Sprite { image: asset_server.load(format!("icons/{folder}/{icon}.png")), custom_size: Some(Vec2::splat(24.0)), ..default() },
                 Transform::from_xyz(-166.0, top - 13.0, 5.0),
             ));
             let mut names = move_names(c, button);
-            if names.len() > 56 {
-                names.truncate(53);
-                names.push_str("...");
-            }
+            if names.chars().count() > 52 { names = names.chars().take(49).collect::<String>() + "..."; }
             text(ui, names, 8.0, gold, Anchor::TOP_LEFT, -148.0, top);
             if let Some(blurb) = c.blurbs.get(row) {
-                text(ui, wrap(blurb, 56), 8.0, body, Anchor::TOP_LEFT, -148.0, top - 10.0);
+                text(ui, skill_blurb(blurb), 8.0, body, Anchor::TOP_LEFT, -148.0, top - 10.0);
             }
         }
         if let Some((e, sub)) = glitched {
@@ -929,7 +930,7 @@ fn controls_labels(settings: &Settings, rebinding: Option<usize>) -> Vec<String>
 fn spawn_controls(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<Settings>, mut rebinding: ResMut<Rebinding>, assets: Res<AssetServer>) {
     rebinding.0 = None;
     build_controls(&mut commands, &mut menu, AppState::Controls, &settings);
-    crate::render::controller_legend(&mut commands, &assets, AppState::Controls, None, -81.0);
+    crate::render::controller_legend(&mut commands, &assets, AppState::Controls, None, -75.0);
 }
 
 fn build_controls(commands: &mut Commands, menu: &mut Menu, state: AppState, settings: &Settings) {
@@ -1091,7 +1092,12 @@ fn sync_pause(
     mode: Res<Mode>,
     mut rebinding: ResMut<Rebinding>,
     old: Query<Entity, With<PauseUi>>,
+    mut corners: Query<&mut Visibility, With<crate::render::HudCorner>>,
+    mut status: Query<&mut Visibility, (Without<crate::render::HudCorner>, Or<(With<crate::TimerText>, With<crate::BannerText>, With<crate::SubBannerText>)>)>,
 ) {
+    let visibility = if pause.open() { Visibility::Hidden } else { Visibility::Inherited };
+    for mut corner in &mut corners { if *corner != visibility { *corner = visibility; } }
+    for mut label in &mut status { if *label != visibility { *label = visibility; } }
     if *shown == *pause {
         return;
     }
@@ -1104,14 +1110,15 @@ fn sync_pause(
     match *pause {
         Pause::Closed => {}
         Pause::Main => {
-            let title = if *mode == Mode::Online { "Paused (the match goes on)" } else { "Paused" };
+            let title = "Paused";
+            if *mode == Mode::Online { spawn_text(&mut commands, AppState::Overlay, "Online match continues while paused".into(), 8.0, Color::WHITE, 64.0); }
             let items = vec![Item::new("Resume", Color::WHITE), Item::new("Options", Color::WHITE), Item::new("Surrender", red)];
             spawn_menu(&mut commands, &mut menu, AppState::Overlay, title, "W/S or Up/Down: move    Enter: select    Esc: resume", items, None);
         }
         Pause::Options => build_options(&mut commands, &mut menu, AppState::Overlay, &settings),
         Pause::Controls => {
             build_controls(&mut commands, &mut menu, AppState::Overlay, &settings);
-            crate::render::controller_legend(&mut commands, &assets, AppState::Overlay, None, -81.0);
+            crate::render::controller_legend(&mut commands, &assets, AppState::Overlay, None, -75.0);
         },
         Pause::Surrender => {
             let items = vec![Item::new("No, keep fighting", Color::WHITE), Item::new("Yes, surrender", red)];

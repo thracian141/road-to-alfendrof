@@ -179,6 +179,7 @@ struct DevOptions {
     cpu: bool,
     debug: bool,
     screenshot: Option<String>,
+    preview: Option<String>,
     delay: f32,
     /// `--p1 0 --p2 1`: roster indices.
     picks: [usize; 2],
@@ -204,6 +205,7 @@ impl DevOptions {
             cpu: args.iter().any(|a| a == "--cpu"),
             debug: args.iter().any(|a| a == "--debug"),
             screenshot: value("--screenshot"),
+            preview: value("--screen"),
             delay: value("--delay").and_then(|d| d.parse().ok()).unwrap_or(3.0),
             picks: [
                 value("--p1").and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -442,7 +444,9 @@ fn main() {
         .add_systems(Update, render::animate_zones.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (toggle_debug, dev_screenshot));
 
-    if dev.fight {
+    if let Some(state) = dev.preview.as_deref().and_then(|s| match s { "options" => Some(AppState::Options), "controls" => Some(AppState::Controls), "stages" => Some(AppState::StageSelect), _ => None }) {
+        app.insert_state(state);
+    } else if dev.fight {
         // keep a bad index from crashing
         let last = app.world().resource::<Roster>().0.len() - 1;
         app.insert_resource(Selection { chars: [dev.picks[0].min(last), dev.picks[1].min(last), 0, 0], stage: 0 });
@@ -477,6 +481,14 @@ fn rgb((r, g, b): (f32, f32, f32)) -> Color {
     Color::srgb(r, g, b)
 }
 
+/// Keep names clear of the round pips at the inner end of each bar.
+fn hud_name_parts(username: &str, character: &str) -> (String, String) {
+    let character: String = character.chars().take(20).collect();
+    let budget = 20usize.saturating_sub(character.chars().count() + 1);
+    let username = if budget >= 3 { username.chars().take(budget).collect() } else { String::new() };
+    (username, character)
+}
+
 fn spawn_fight(
     mut commands: Commands,
     mut sim: ResMut<Sim>,
@@ -499,7 +511,7 @@ fn spawn_fight(
     }
     // (the fighters' skills are shown in the character select now, so the match starts with the countdown)
     *sim = fresh_sim(&roster, &selection, *mode, false);
-    *pause = menus::Pause::Closed;
+    *pause = if dev.preview.as_deref() == Some("pause") { menus::Pause::Main } else { menus::Pause::Closed };
     surrender.0 = false;
     if dev.spread {
         sim.0.fighters[0].x = -380 * PX;
@@ -551,15 +563,15 @@ fn spawn_fight(
                 }
                 // the username, in italics, then the fighter's name; long names sit further in so they stay on screen
                 let character = &roster.0[selection.chars[side]];
-                let who = names.0.get(side).cloned().unwrap_or_default();
-                let width = character.name.len() + if who.is_empty() { 0 } else { who.len() + 1 };
+                let (who, character_name) = hud_name_parts(names.0.get(side).map_or("", |s| s.as_str()), &character.name);
+                let width = character_name.chars().count() + if who.is_empty() { 0 } else { who.chars().count() + 1 };
                 let at = Transform::from_xyz(dir * (BAR_EDGE - 6.0 - width as f32 * 2.8), bar_y - 18.0, 10.2);
                 if who.is_empty() {
-                    hud.spawn((Text2d::new(character.name.clone()), crate::pixel_font(10.0), TextColor(rgb(character.color)), at));
+                    hud.spawn((Text2d::new(character_name.clone()), crate::pixel_font(10.0), TextColor(rgb(character.color)), at));
                 } else {
                     let italic_font = TextFont { font: bevy::text::FontSource::Handle(italic.0.clone()), ..crate::pixel_font(10.0) };
                     hud.spawn((Text2d::new(format!("{who} ")), italic_font, TextColor(rgb(character.color)), at)).with_children(|label| {
-                        label.spawn((TextSpan::new(character.name.clone()), crate::pixel_font(10.0), TextColor(rgb(character.color))));
+                        label.spawn((TextSpan::new(character_name.clone()), crate::pixel_font(10.0), TextColor(rgb(character.color))));
                     });
                 }
             }

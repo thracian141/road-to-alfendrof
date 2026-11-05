@@ -920,14 +920,14 @@ pub fn spawn_skill_bar(mut commands: Commands, hud: Single<Entity, With<crate::H
             for slot in 0..3 {
                 let x = if left { -146.0 + slot as f32 * 28.0 } else { 90.0 + slot as f32 * 28.0 };
                 for role in [SkillRole::Glow, SkillRole::Icon, SkillRole::Shade, SkillRole::Prompt] {
-                    let (size, z) = match role { SkillRole::Glow => (28.0, 9.8), SkillRole::Icon => (24.0, 10.0), SkillRole::Shade => (24.0, 10.1), SkillRole::Prompt => (12.0, 10.5) };
+                    let (size, z) = match role { SkillRole::Glow => (28.0, 9.8), SkillRole::Icon => (24.0, 10.0), SkillRole::Shade => (24.0, 10.1), SkillRole::Prompt => (10.0, 10.5) };
                     let mut sprite = Sprite::from_color(Color::WHITE, Vec2::splat(size));
                     if matches!(role, SkillRole::Icon) { sprite.image = assets.load(format!("icons/{folder}/light.png")); }
-                    let e = h.spawn((SkillPiece { player, slot, y, role }, sprite, Transform::from_xyz(x, y + if matches!(role, SkillRole::Prompt) { 7.0 } else { 0.0 }, z), Visibility::Hidden)).id();
+                    let e = h.spawn((SkillPiece { player, slot, y, role }, sprite, Transform::from_xyz(x - if matches!(role, SkillRole::Prompt) { 7.0 } else { 0.0 }, y + if matches!(role, SkillRole::Prompt) { 8.0 } else { 0.0 }, z), Visibility::Hidden)).id();
                     if matches!(role, SkillRole::Icon) { h.commands().entity(e).insert(SkillIcon); }
                 }
                 for timer in [false, true] {
-                    h.spawn((SkillText { player, slot, timer }, Text2d::new(""), crate::pixel_font(8.0), TextColor(if timer { Color::WHITE } else { Color::srgb(1.0, 0.9, 0.5) }), Transform::from_xyz(x, y + if timer { -1.0 } else { 7.0 }, 10.6), Visibility::Hidden));
+                    h.spawn((SkillText { player, slot, timer }, Text2d::new(""), crate::pixel_font(8.0), TextColor(if timer { Color::WHITE } else { Color::srgb(1.0, 0.9, 0.5) }), Transform::from_xyz(x - if timer { 0.0 } else { 7.0 }, y + if timer { -2.0 } else { 8.0 }, 10.6), Visibility::Hidden));
                 }
             }
         }
@@ -1715,13 +1715,16 @@ mod controller_prompt_tests {
     }
 }
 
+#[derive(Component)]
+pub struct HudCorner;
+
 /// Shrink match HUD around its screen anchors; pause menus keep their normal size.
 pub fn compact_hud(mut commands: Commands, hud: Single<(Entity, &Children), With<crate::HudRoot>>, transforms: Query<&Transform>) {
     let (root, children) = *hud;
     let scale = 0.68;
     let mut groups = Vec::new();
     for (x, y) in [(-192.0, 108.0), (192.0, 108.0), (-192.0, -108.0), (192.0, -108.0)] {
-        groups.push(commands.spawn((ChildOf(root), Transform::from_xyz(x * (1.0 - scale), y * (1.0 - scale), 0.0).with_scale(Vec3::new(scale, scale, 1.0)), Visibility::default())).id());
+        groups.push(commands.spawn((HudCorner, ChildOf(root), Transform::from_xyz(x * (1.0 - scale), y * (1.0 - scale), 0.0).with_scale(Vec3::new(scale, scale, 1.0)), Visibility::default())).id());
     }
     for child in children.iter() {
         let Ok(tf) = transforms.get(child) else { continue };
