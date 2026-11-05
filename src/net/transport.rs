@@ -12,11 +12,15 @@ use super::lobby::LobbyMsg;
 
 pub const TAG_LOBBY: u8 = 0xA0;
 pub const TAG_GAME: u8 = 0xA1;
+const TAG_PROBE: u8 = 0xA2;
+#[derive(serde::Serialize,serde::Deserialize)]
+pub struct Probe { pub room: String, pub slot: usize }
 const BUFFER: usize = 4096;
 
 /// What arrived on the socket.
 pub enum Packet {
     Lobby(LobbyMsg),
+    Probe(Probe),
     /// A STUN server's reply (raw).
     Stun(Vec<u8>),
     /// A game packet; only the game socket reads these.
@@ -45,6 +49,8 @@ impl Transport {
         let _ = self.socket.send_to(&bytes, to);
     }
 
+    pub fn send_probe(&self, probe:&Probe, to:SocketAddr) { if let Ok(data)=bincode::serialize(probe) {let mut bytes=vec![TAG_PROBE];bytes.extend(data);let _=self.socket.send_to(&bytes,to);} }
+
     pub fn send_raw(&self, bytes: &[u8], to: SocketAddr) {
         let _ = self.socket.send_to(bytes, to);
     }
@@ -63,6 +69,7 @@ impl Transport {
                                 out.push((from, Packet::Lobby(msg)));
                             }
                         }
+                        TAG_PROBE => { if let Ok(p)=bincode::deserialize::<Probe>(&data[1..]) { out.push((from,Packet::Probe(p))); } },
                         TAG_GAME => out.push((from, Packet::Game(data[1..].to_vec()))),
                         0x01 => out.push((from, Packet::Stun(data.to_vec()))),
                         _ => {}
@@ -80,7 +87,7 @@ impl Transport {
     /// Hand the socket to the game. `repeat` is a lobby message resent every 250 ms (for up to 3 s, or
     /// until a game packet arrives) in case the other side hasn't seen it.
     pub fn into_game_socket_repeating(self, repeat: Option<(LobbyMsg, SocketAddr)>) -> GameSocket {
-        GameSocket { socket: self.socket, repeat, last: Instant::now(), deadline: Instant::now() + Duration::from_secs(3), heard_game: false }
+        GameSocket { socket: self.socket, repeat, last: Instant::now(), deadline: Instant::now() + Duration::from_secs(3), heard_game: false, routes: Vec::new() }
     }
 
     pub fn into_game_socket(self) -> GameSocket {
@@ -95,13 +102,19 @@ pub struct GameSocket {
     last: Instant,
     deadline: Instant,
     heard_game: bool,
+    routes: Vec<(SocketAddr, Vec<SocketAddr>)>,
+}
+
+impl GameSocket {
+    pub fn with_routes(mut self,routes:Vec<(SocketAddr,Vec<SocketAddr>)>)->Self{self.routes=routes;self}
 }
 
 impl NonBlockingSocket<SocketAddr> for GameSocket {
     fn send_to(&mut self, msg: &Message, addr: &SocketAddr) {
         let mut bytes = vec![TAG_GAME];
         bytes.extend(bincode::serialize(msg).expect("game messages serialize"));
-        let _ = self.socket.send_to(&bytes, addr);
+        let target=self.routes.iter().find(|(canonical,_)|canonical==addr).and_then(|(_,aliases)|aliases.first()).unwrap_or(addr);
+        let _ = self.socket.send_to(&bytes, target);
     }
 
     fn receive_all_messages(&mut self) -> Vec<(SocketAddr, Message)> {
@@ -121,7 +134,8 @@ impl NonBlockingSocket<SocketAddr> for GameSocket {
                 Ok((n, from)) if n > 1 && buf[0] == TAG_GAME => {
                     if let Ok(msg) = bincode::deserialize::<Message>(&buf[1..n]) {
                         self.heard_game = true;
-                        out.push((from, msg));
+                        let canonical=self.routes.iter().find(|(_,aliases)|aliases.contains(&from)).map_or(from,|(canonical,_)|*canonical);
+                        out.push((canonical, msg));
                     }
                 }
                 Ok(_) => {}

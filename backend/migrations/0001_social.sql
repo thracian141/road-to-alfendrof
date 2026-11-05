@@ -1,0 +1,14 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE users (id TEXT PRIMARY KEY, discord_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, friend_code TEXT NOT NULL UNIQUE);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
+CREATE INDEX sessions_expiry ON sessions(expires);
+CREATE TABLE logins (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL UNIQUE, user_id TEXT REFERENCES users(id), expires INTEGER NOT NULL);
+CREATE TABLE oauth_states (hash TEXT PRIMARY KEY, login_id TEXT NOT NULL REFERENCES logins(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
+CREATE TABLE friendships (a TEXT NOT NULL REFERENCES users(id), b TEXT NOT NULL REFERENCES users(id), requester TEXT NOT NULL REFERENCES users(id), state TEXT NOT NULL CHECK(state IN ('pending','accepted')), PRIMARY KEY(a,b), CHECK(a < b));
+CREATE TABLE blocks (blocker TEXT NOT NULL REFERENCES users(id), blocked TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(blocker,blocked));
+CREATE TABLE rooms (id TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), mode TEXT NOT NULL CHECK(mode IN ('1v1','2v2')), build TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE members (room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), slot INTEGER NOT NULL CHECK(slot BETWEEN 0 AND 3), PRIMARY KEY(room_id,user_id), UNIQUE(room_id,slot));
+CREATE TABLE invites (id TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, UNIQUE(room_id,user_id));
+CREATE TABLE throttle (key TEXT PRIMARY KEY, window INTEGER NOT NULL, hits INTEGER NOT NULL);
+CREATE TRIGGER friend_limit BEFORE INSERT ON friendships WHEN (SELECT count(*) FROM friendships WHERE a=NEW.a OR b=NEW.a)>=32 OR (SELECT count(*) FROM friendships WHERE a=NEW.b OR b=NEW.b)>=32 BEGIN SELECT RAISE(ABORT,'social_limit'); END;
+CREATE TRIGGER membership_limit BEFORE INSERT ON members WHEN (SELECT count(*) FROM members m JOIN rooms r ON r.id=m.room_id WHERE m.user_id=NEW.user_id AND r.expires>unixepoch())>=3 BEGIN SELECT RAISE(ABORT,'social_limit'); END;

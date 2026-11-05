@@ -123,7 +123,7 @@ pub fn confirm_pressed(keys: &ButtonInput<KeyCode>) -> bool {
     keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
 }
 
-fn back_pressed(keys: &ButtonInput<KeyCode>) -> bool {
+pub(crate) fn back_pressed(keys: &ButtonInput<KeyCode>) -> bool {
     keys.just_pressed(KeyCode::Escape)
 }
 
@@ -229,7 +229,7 @@ pub fn fit(text: &str, max: usize) -> String {
 ")
 }
 
-fn spawn_text(commands: &mut Commands, state: AppState, text: String, size: f32, color: Color, y: f32) -> Entity {
+pub(crate) fn spawn_text(commands: &mut Commands, state: AppState, text: String, size: f32, color: Color, y: f32) -> Entity {
     let hint = text.contains("Enter") && text.contains("Esc") && size <= 9.0;
     let original = text.clone();
     let entity = commands
@@ -754,7 +754,7 @@ fn title_confirm(
             }
             3 => {
                 *mode = Mode::Online;
-                next.set(AppState::Online);
+                next.set(AppState::Social);
             }
             _ => next.set(AppState::Options),
         }
@@ -772,7 +772,13 @@ fn char_confirm(
     mut next: ResMut<NextState<AppState>>,
     mut lobby: ResMut<crate::online::OnlineLobby>,
     mut info: ResMut<crate::online::OnlineInfo>,
+    mut social: ResMut<crate::social::Social>,
 ) {
+    if *mode == Mode::Online && social.in_room() {
+        if back_pressed(&keys.0) { social.leave(); info.locked=false; next.set(AppState::Social); }
+        else if confirm_pressed(&keys.0) && !info.locked { social.pick(menu.cursor); info.locked=true; header.0="Connecting directly to players...".into(); }
+        return;
+    }
     // online you only pick your own fighter; the match starts when both are in (see `online::drive_lobby`)
     if *mode == Mode::Online {
         if back_pressed(&keys.0) {

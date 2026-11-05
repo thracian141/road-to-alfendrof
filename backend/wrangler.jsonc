@@ -1,0 +1,53 @@
+{
+  "name": "alfendrof-multiplayer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-05",
+  "workers_dev": true,
+  "vars": {
+    "PUBLIC_ORIGIN": "https://alfendrof-multiplayer.important-762.workers.dev",
+    "DISCORD_CLIENT_ID": "1568016133834018816"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "alfendrof-social",
+      "database_id": "13d4f4b7-d681-4c0d-995e-d3907c43b69b",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room"
+      },
+      {
+        "name": "PRESENCE",
+        "class_name": "Presence"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Room",
+        "Presence"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "17 * * * *"
+    ]
+  },
+  "account_id": "762056346ae36c6cacc7b4bf86fa34fa",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  }
+}

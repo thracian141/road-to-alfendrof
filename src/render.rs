@@ -916,7 +916,7 @@ pub fn spawn_skill_bar(mut commands: Commands, hud: Single<Entity, With<crate::H
             let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
             let portrait_x = if left { -176.0 } else { 176.0 };
             h.spawn((Sprite { image: assets.load(format!("portraits/{folder}.png")), custom_size: Some(Vec2::splat(24.0)), ..default() }, Transform::from_xyz(portrait_x, y, 10.0)));
-            h.spawn((Text2d::new(format!("P{} {}", player + 1, c.name)), TextFont { font_size: FontSize::Px(6.0), ..crate::pixel_font(8.0) }, TextColor(Color::WHITE), Transform::from_xyz(if left { -126.0 } else { 126.0 }, y + 20.0, 10.5)));
+            h.spawn((Text2d::new(format!("P{} {}", side + 1, c.name)), TextFont { font_size: FontSize::Px(6.0), ..crate::pixel_font(8.0) }, TextColor(Color::WHITE), Transform::from_xyz(if left { -126.0 } else { 126.0 }, y + 20.0, 10.5)));
             for slot in 0..3 {
                 let x = if left { -146.0 + slot as f32 * 28.0 } else { 90.0 + slot as f32 * 28.0 };
                 for role in [SkillRole::Glow, SkillRole::Icon, SkillRole::Shade, SkillRole::Prompt] {

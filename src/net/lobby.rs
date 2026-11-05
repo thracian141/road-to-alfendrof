@@ -131,6 +131,15 @@ impl Lobby {
         })
     }
 
+    pub fn candidates(&self) -> Vec<SocketAddr> {
+        let mut out=Vec::new();if let Some(a)=self.public {out.push(a);}if let Some(ip)=upnp::lan_ip(){out.push(SocketAddr::new(ip.into(),self.port()));}out
+    }
+    pub fn probe(&self,room:&str,slot:usize,to:SocketAddr){self.transport.send_probe(&super::transport::Probe{room:room.into(),slot},to);}
+    pub fn poll_probes(&mut self)->Vec<(SocketAddr,super::transport::Probe)>{
+        self.poll_router();let mut out=Vec::new();for (from,p) in self.transport.receive(){match p {Packet::Stun(msg)=>{if let Some(a)=stun::parse_response(&msg,self.txid){self.public=Some(a);}},Packet::Probe(p)=>out.push((from,p)),_=>{}}}out
+    }
+    pub fn into_direct_socket(self)->GameSocket{self.transport.into_game_socket()}
+
     pub fn port(&self) -> u16 {
         self.transport.port()
     }
@@ -211,7 +220,7 @@ impl Lobby {
                     }
                 }
                 Packet::Lobby(msg) => self.on_message(from, msg, &mut events),
-                Packet::Game(_) => {}
+                Packet::Game(_) | Packet::Probe(_) => {}
             }
         }
         // resend what the stage needs

@@ -11,7 +11,7 @@ use t2f::net::upnp::{lan_ip, Mapping};
 use t2f::net::{self, NetConfig, DEFAULT_PORT};
 
 use crate::settings::Settings;
-use crate::{AppState, Mode, Roster, Selection, Sim};
+use crate::{AppState, Roster, Selection, Sim};
 
 pub struct OnlinePlugin;
 
@@ -52,15 +52,16 @@ pub struct OnlineInfo {
     pub editing_name: bool,
 }
 
-/// The two players' usernames for the HUD, by side (empty: none).
+/// The players' usernames for the HUD, by side (empty: none).
 #[derive(Resource, Default)]
-pub struct PlayerNames(pub [String; 2]);
+pub struct PlayerNames(pub [String; 4]);
 
 /// The running match.
 #[derive(Resource)]
 pub struct NetSession {
     pub session: ggrs::P2PSession<NetConfig>,
     pub local: usize,
+    pub cloud: bool,
 }
 
 #[derive(Component)]
@@ -198,9 +199,10 @@ fn drive_lobby(
                 sel.chars[player] = mine;
                 sel.chars[1 - player] = theirs;
                 sel.stage = 0;
+                sel.online_teams = false;
                 names.0[player] = settings.username.clone();
                 names.0[1 - player] = peer_name;
-                commands.insert_resource(NetSession { session, local: player });
+                commands.insert_resource(NetSession { session, local: player, cloud: false });
                 next.set(AppState::Fight);
             }
             Err(e) => {
@@ -461,13 +463,9 @@ pub fn step_online(
         let local = net.local;
         if net.session.add_local_input(local, local_input.into()).is_ok() {
             if let Ok(requests) = net.session.advance_frame() {
-                net::handle_requests(&mut sim.0, requests, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
+                net::handle_requests(&mut sim.0, requests, sel.chars.map(|i| &roster.0[i]));
             }
         }
     }
     problem
-}
-
-pub fn local_online_input(mode: Mode) -> bool {
-    mode == Mode::Online
 }

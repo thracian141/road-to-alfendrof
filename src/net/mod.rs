@@ -17,6 +17,7 @@ use ggrs::{
 use serde::{Deserialize, Serialize};
 
 pub mod code;
+pub mod social;
 pub mod lobby;
 pub mod stun;
 pub mod transport;
@@ -40,6 +41,7 @@ impl From<NetInput> for Input {
     }
 }
 
+#[derive(Debug)]
 pub struct NetConfig;
 
 impl Config for NetConfig {
@@ -79,6 +81,13 @@ pub fn start_p2p(socket: transport::GameSocket, local: usize, remote: SocketAddr
         .start_p2p_session(socket)
 }
 
+/// Direct UDP full mesh. Backend slot ordering is the GGRS player ordering.
+pub fn start_mesh(socket: transport::GameSocket, local: usize, peers: &[SocketAddr]) -> Result<P2PSession<NetConfig>,GgrsError> {
+    let mut b=builder()?.with_num_players(peers.len())?;
+    for (slot,address) in peers.iter().enumerate() {b=b.add_player(if slot==local {PlayerType::Local}else{PlayerType::Remote(*address)},slot)?;}
+    b.start_p2p_session(socket)
+}
+
 /// An offline session that rolls back every frame and compares checksums, to find anything
 /// non-deterministic.
 pub fn start_synctest(check_distance: usize) -> Result<SyncTestSession<NetConfig>, GgrsError> {
@@ -97,7 +106,7 @@ pub fn checksum(state: &GameState) -> u128 {
 }
 
 /// Do what ggrs asks: save the state, load a saved one, or step the simulation.
-pub fn handle_requests(state: &mut GameState, requests: Vec<GgrsRequest<NetConfig>>, chars: [&CharacterData; 2]) {
+pub fn handle_requests<const N: usize>(state: &mut GameState, requests: Vec<GgrsRequest<NetConfig>>, chars: [&CharacterData; N]) {
     for request in requests {
         match request {
             GgrsRequest::SaveGameState { cell, frame } => save(state, cell, frame),
@@ -108,7 +117,8 @@ pub fn handle_requests(state: &mut GameState, requests: Vec<GgrsRequest<NetConfi
                     Some((input, status)) if *status != InputStatus::Disconnected => Input::from(*input),
                     _ => Input::default(),
                 };
-                state.step([pad(0), pad(1)], chars);
+                if state.fighters.len()==4 { state.step([pad(0),pad(1),pad(2),pad(3)],[chars[0],chars[1],chars[2],chars[3]]); }
+                else { state.step([pad(0),pad(1)],[chars[0],chars[1]]); }
             }
         }
     }
@@ -206,4 +216,31 @@ mod tests {
         assert!(advanced >= 600, "the sessions never got going ({advanced} frames)");
         assert_eq!(desyncs, 0, "the two simulations drifted apart");
     }
+    /// Four independent rollback sessions exchange combat inputs only over localhost UDP.
+    #[test]
+    fn four_udp_peers_stay_in_sync_without_a_backend() {
+        let c=load("ayz");
+        let transports=(0..4).map(|_|transport::Transport::bind(0).unwrap()).collect::<Vec<_>>();
+        let addresses=transports.iter().map(|t|format!("127.0.0.1:{}",t.port()).parse().unwrap()).collect::<Vec<SocketAddr>>();
+        let mut sessions=transports.into_iter().enumerate().map(|(local,t)|start_mesh(t.into_game_socket(),local,&addresses).unwrap()).collect::<Vec<_>>();
+        let mut states=(0..4).map(|_|GameState::team_match()).collect::<Vec<_>>();
+        let started=std::time::Instant::now();
+        while states.iter().any(|s|s.frame<240) && started.elapsed()<Duration::from_secs(15) {
+            for (local,session) in sessions.iter_mut().enumerate(){
+                session.poll_remote_clients();
+                for event in session.events(){assert!(!matches!(event,GgrsEvent::DesyncDetected{..}|GgrsEvent::Disconnected{..}),"{event:?}");}
+                if session.current_state()==SessionState::Running && states[local].frame<240 {
+                    session.add_local_input(local,pad(local as u32+1,session.current_frame() as u32)).unwrap();
+                    if let Ok(requests)=session.advance_frame(){handle_requests(&mut states[local],requests,[&c;4]);}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(states.iter().all(|s|s.frame==240),"not all four UDP sessions advanced");
+        // Let every last input arrive, then confirm the saved state after the prediction window.
+        // Different final predicted frames can differ; frame 220 must already be confirmed.
+        let sums=sessions.iter().map(|s|s.confirmed_frame()).collect::<Vec<_>>();
+        assert!(sums.iter().all(|f|*f>=220),"remote inputs did not arrive: {sums:?}");
+    }
+
 }
