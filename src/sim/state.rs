@@ -242,8 +242,8 @@ impl GameState {
         let mut state = Self::new();
         state.teams = vec![0, 1, 0, 1];
         state.targets = vec![1, 0, 1, 0];
-        state.stage_half_width = 700 * PX;
-        state.platforms = [(-530, -350, 65), (-240, -70, 110), (70, 240, 110), (350, 530, 65), (-85, 85, 185)]
+        state.stage_half_width = 500 * PX;
+        state.platforms = [(-430, -290, 65), (-240, -70, 110), (70, 240, 110), (290, 430, 65), (-85, 85, 185)]
             .into_iter().map(|(left, right, height)| Platform { left: left * PX, right: right * PX, height: height * PX }).collect();
         state.fighters = vec![Fighter::new(-180 * PX, 1), Fighter::new(180 * PX, -1), Fighter::new(-280 * PX, 1), Fighter::new(280 * PX, -1)];
         state.ravens = vec![Raven::idle(); 4];
@@ -1710,6 +1710,15 @@ mod tests {
         s.fighters[0].x = -18 * PX;
         s.fighters[1].x = 18 * PX;
         s
+    }
+
+    #[test]
+    fn compact_team_arena_contains_fighters_and_all_platforms() {
+        let s = GameState::team_match();
+        assert_eq!(s.stage_half_width * 2 / PX, 1000);
+        assert!(s.fighters.iter().all(|f| f.x.abs() + Fighter::HALF_WIDTH <= s.stage_half_width));
+        assert_eq!(s.platforms.len(), 5);
+        assert!(s.platforms.iter().all(|p| p.left < p.right && p.left >= -s.stage_half_width && p.right <= s.stage_half_width));
     }
 
     #[test]
