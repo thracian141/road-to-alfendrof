@@ -60,6 +60,7 @@ pub enum AppState {
 pub enum Mode {
     #[default]
     VsCpu,
+    LocalVersus,
     Online,
 }
 
@@ -242,6 +243,45 @@ fn dev_screenshot(
     }
 }
 
+/// Controllers keep their player slots when another controller disconnects.
+#[derive(Resource, Default)]
+struct ControllerSlots([Option<Entity>; 2]);
+
+fn assign_controllers(pads: Query<Entity, With<Gamepad>>, mut slots: ResMut<ControllerSlots>) {
+    for slot in &mut slots.0 {
+        if slot.is_some_and(|entity| pads.get(entity).is_err()) { *slot = None; }
+    }
+    let mut connected: Vec<_> = pads.iter().collect();
+    connected.sort_by_key(|entity| entity.to_bits());
+    for entity in connected {
+        if slots.0.contains(&Some(entity)) { continue; }
+        if let Some(slot) = slots.0.iter_mut().find(|slot| slot.is_none()) { *slot = Some(entity); }
+    }
+}
+
+#[derive(Resource, Default)]
+struct MenuInput(ButtonInput<KeyCode>);
+
+fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut input: ResMut<MenuInput>, mut previous: Local<[bool; 4]>) {
+    use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
+    input.0 = keys.clone();
+    let mut directions = [false; 4];
+    for pad in &pads {
+        let x = pad.get(A::LeftStickX).unwrap_or(0.0);
+        let y = pad.get(A::LeftStickY).unwrap_or(0.0);
+        directions[0] |= pad.pressed(B::DPadUp) || y > 0.5;
+        directions[1] |= pad.pressed(B::DPadDown) || y < -0.5;
+        directions[2] |= pad.pressed(B::DPadLeft) || x < -0.5;
+        directions[3] |= pad.pressed(B::DPadRight) || x > 0.5;
+        if pad.just_pressed(B::South) || pad.just_pressed(B::Start) { input.0.press(KeyCode::Enter); }
+        if pad.just_pressed(B::East) { input.0.press(KeyCode::Escape); }
+    }
+    for (i, key) in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight].into_iter().enumerate() {
+        if directions[i] && !previous[i] { input.0.press(key); }
+    }
+    *previous = directions;
+}
+
 fn main() {
     // `--backend dx12|vulkan|gl` picks the graphics API, for PCs whose default one draws wrongly
     let args: Vec<String> = std::env::args().collect();
@@ -289,6 +329,10 @@ fn main() {
         }))
         .insert_resource(Stages(load_dir("stages", StageData::from_ron)))
         .insert_resource(DebugView(dev.debug))
+        .init_resource::<MenuInput>()
+        .init_resource::<ControllerSlots>()
+        .add_systems(PreUpdate, assign_controllers.after(bevy::input::InputSystems))
+        .add_systems(PreUpdate, controller_menu_input.after(bevy::input::InputSystems))
         .init_resource::<Mode>()
         .init_resource::<Selection>()
         .init_resource::<Sim>()
@@ -554,10 +598,33 @@ fn spawn_fight(
     commands.insert_resource(handles);
 }
 
+fn controller_fight_input(pad: &Gamepad) -> t2f::sim::Input {
+    let mut input = t2f::sim::Input::default();
+        use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
+        use t2f::sim::Input;
+        let x = pad.get(A::LeftStickX).unwrap_or(0.0);
+        let y = pad.get(A::LeftStickY).unwrap_or(0.0);
+        for (pressed, flag) in [
+            (pad.pressed(B::DPadLeft) || x < -0.5, Input::LEFT),
+            (pad.pressed(B::DPadRight) || x > 0.5, Input::RIGHT),
+            (pad.pressed(B::DPadUp) || y > 0.5, Input::UP),
+            (pad.pressed(B::DPadDown) || y < -0.5, Input::DOWN),
+            (pad.pressed(B::West), Input::LIGHT),
+            (pad.pressed(B::North), Input::HEAVY),
+            (pad.pressed(B::East), Input::SPECIAL),
+            (pad.pressed(B::South), Input::BLOCK),
+            (pad.pressed(B::LeftTrigger), Input::ROLL_LEFT),
+            (pad.pressed(B::RightTrigger), Input::ROLL_RIGHT),
+        ] { if pressed { input.0 |= flag; } }
+    input
+}
+
 fn step_sim(
     mut sim: ResMut<Sim>,
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<settings::Settings>,
+    gamepads: Query<&Gamepad>,
+    slots: Res<ControllerSlots>,
     roster: Res<Roster>,
     sel: Res<Selection>,
     dev: Res<DevOptions>,
@@ -568,8 +635,10 @@ fn step_sim(
     mut info: ResMut<online::OnlineInfo>,
     mut commands: Commands,
 ) {
-    // the keys set in Options > Controls; player 2 is the CPU
     let mut player = settings.read_input(&keys);
+    if let Some(pad) = slots.0[0].and_then(|entity| gamepads.get(entity).ok()) {
+        player.0 |= controller_fight_input(pad).0;
+    }
     player.0 |= dev.hold;
     // online: the other player's buttons come from the network
     if *mode == Mode::Online {
@@ -582,7 +651,12 @@ fn step_sim(
         }
         return;
     }
-    let inputs = [player, cpu_input_vs(&sim.0, 1, &roster.0[sel.chars[1]], &roster.0[sel.chars[0]])];
+    let opponent = if *mode == Mode::LocalVersus {
+        slots.0[1].and_then(|entity| gamepads.get(entity).ok()).map(controller_fight_input).unwrap_or_default()
+    } else {
+        cpu_input_vs(&sim.0, 1, &roster.0[sel.chars[1]], &roster.0[sel.chars[0]])
+    };
+    let inputs = [player, opponent];
     sim.0.step(inputs, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
 }
 
@@ -743,7 +817,7 @@ fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut debug: ResMut<DebugView>) {
 }
 
 fn restart_match(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: Res<MenuInput>,
     mut sim: ResMut<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
@@ -751,7 +825,7 @@ fn restart_match(
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
-    if keys.just_pressed(KeyCode::Enter) && sim.0.phase == Phase::MatchOver {
+    if input.0.just_pressed(KeyCode::Enter) && sim.0.phase == Phase::MatchOver {
         if *mode == Mode::Online {
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
@@ -769,8 +843,8 @@ fn fresh_sim(roster: &Roster, sel: &Selection) -> Sim {
     sim
 }
 
-fn leave_fight(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
-    if keys.just_pressed(KeyCode::Escape) {
+fn leave_fight(input: Res<MenuInput>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
+    if input.0.just_pressed(KeyCode::Escape) {
         commands.remove_resource::<online::NetSession>();
         next.set(AppState::Title);
     }

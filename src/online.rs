@@ -120,7 +120,7 @@ fn spawn_online_screen(mut commands: Commands, mut lobby: ResMut<OnlineLobby>, r
     text(
         &mut commands,
         Label,
-        "Enter: invite    Ctrl+C: copy yours    Ctrl+V: paste    Esc: back",
+        "Enter: invite   Esc: back   PAD: Up/Down character, Right add, Left delete, A invite, B back",
         8.0,
         grey,
         -92.0,
@@ -188,6 +188,8 @@ fn drive_lobby(
 /// The Online screen: typing an address, inviting, answering invites.
 fn online_screen(
     keys: Res<ButtonInput<KeyCode>>,
+    nav: Res<crate::MenuInput>,
+    mut pad_character: Local<usize>,
     mut typing: MessageReader<KeyboardInput>,
     mut lobby: ResMut<OnlineLobby>,
     mut info: ResMut<OnlineInfo>,
@@ -204,6 +206,14 @@ fn online_screen(
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let invited = matches!(lobby.0.as_ref().map(|l| l.stage), Some(Stage::Invited(_)));
 
+    // Controller address entry: choose a character, append it, or delete the last one.
+    const CHARS: &[u8] = b"0123456789.:";
+    if !invited {
+        if nav.0.just_pressed(KeyCode::ArrowUp) { *pad_character = (*pad_character + 1) % CHARS.len(); }
+        if nav.0.just_pressed(KeyCode::ArrowDown) { *pad_character = (*pad_character + CHARS.len() - 1) % CHARS.len(); }
+        if nav.0.just_pressed(KeyCode::ArrowRight) && info.typed.len() < 21 { info.typed.push(CHARS[*pad_character] as char); }
+        if nav.0.just_pressed(KeyCode::ArrowLeft) { info.typed.pop(); }
+    }
     // typing: digits, '.' and ':' only
     for ev in typing.read() {
         if ev.state != ButtonState::Pressed || ctrl || invited {
@@ -245,14 +255,14 @@ fn online_screen(
     }
 
     if invited {
-        if keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::Enter) {
+        if keys.just_pressed(KeyCode::KeyF) || nav.0.just_pressed(KeyCode::Enter) {
             l.accept();
-        } else if keys.just_pressed(KeyCode::KeyG) {
+        } else if keys.just_pressed(KeyCode::KeyG) || nav.0.just_pressed(KeyCode::Escape) {
             l.decline();
             info.invite_from = None;
             info.message = "Declined.".into();
         }
-    } else if keys.just_pressed(KeyCode::Enter) && !info.typed.is_empty() {
+    } else if nav.0.just_pressed(KeyCode::Enter) && !info.typed.is_empty() {
         let parsed = info.typed.parse::<SocketAddr>().ok().or_else(|| info.typed.parse::<IpAddr>().ok().map(|ip| SocketAddr::new(ip, DEFAULT_PORT)));
         match parsed {
             Some(addr) => {
@@ -262,7 +272,7 @@ fn online_screen(
             None => info.message = "That is not an address (like 203.0.113.5:7777).".into(),
         }
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if !invited && nav.0.just_pressed(KeyCode::Escape) {
         if matches!(l.stage, Stage::Inviting(_)) {
             l.leave();
             info.message = "Cancelled.".into();
@@ -297,7 +307,7 @@ fn online_screen(
         lan_text.0 = new_lan;
     }
     let blink = if (time.elapsed_secs() * 2.0) as u32 % 2 == 0 { "_" } else { " " };
-    let new_input = format!("{}{}", info.typed, blink);
+    let new_input = format!("{}{}  [{}]", info.typed, blink, CHARS[*pad_character] as char);
     if input_text.0 != new_input {
         input_text.0 = new_input;
     }

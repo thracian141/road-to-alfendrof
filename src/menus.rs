@@ -120,7 +120,7 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
     // rows with pictures need more room; long lists of text get smaller
     let with_pictures = items.iter().any(|i| i.portrait.is_some());
     let compact = !with_pictures && items.len() > 6;
-    let spacing = if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 12.0 } else { 22.0 };
+    let spacing = if state == AppState::Title { 18.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 12.0 } else { 22.0 };
     let top = top_override.unwrap_or(if with_pictures { 56.0 } else if compact { 62.0 } else { 40.0 });
     let size = if compact { 8.0 } else { 16.0 };
     for (index, item) in items.into_iter().enumerate() {
@@ -191,9 +191,9 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
         &mut menu,
         state,
         "",
-        "W/S or Up/Down: move    F / J / Enter: select    Esc: quit",
-        vec![Item::new("vs CPU", white), online, Item::new("Options", white)],
-        Some(-30.0),
+        "W/S: move   Enter: select   Esc: quit   PAD: D-PAD / STICK, A select, B back",
+        vec![Item::new("vs CPU", white), Item::new("Local 2 players", white), online, Item::new("Options", white)],
+        Some(-27.0),
     );
 }
 
@@ -213,6 +213,9 @@ fn spawn_char_select(
     asset_server: Res<AssetServer>,
 ) {
     picking.0 = 0;
+    if *mode == Mode::LocalVersus {
+        spawn_text(&mut commands, AppState::CharSelect, "P1: FIRST CONTROLLER + KEYBOARD   P2: SECOND CONTROLLER".into(), 7.0, Color::srgb(0.7, 0.7, 0.8), -78.0);
+    }
     let items = roster
         .0
         .iter()
@@ -233,7 +236,7 @@ fn spawn_char_select(
         &mut menu,
         AppState::CharSelect,
         &pick_title(0, *mode),
-        "W/S or Up/Down: move    F / J / Enter: pick    G / K / Esc: back",
+        "W/S: move   Enter: pick   Esc: back   PAD: D-PAD / STICK, A pick, B back",
         items,
         None,
     );
@@ -241,7 +244,9 @@ fn spawn_char_select(
 
 fn pick_title(player: usize, mode: Mode) -> String {
     match (player, mode) {
+        (0, Mode::LocalVersus) => "Player 1: choose your fighter".into(),
         (0, _) => "Choose your fighter".into(),
+        (_, Mode::LocalVersus) => "Player 2: choose your fighter".into(),
         (_, Mode::VsCpu) => "Choose the CPU's fighter".into(),
         (_, Mode::Online) => "Choose your fighter".into(),
     }
@@ -258,19 +263,19 @@ fn spawn_stage_select(mut commands: Commands, mut menu: ResMut<Menu>, stages: Re
         &mut menu,
         AppState::StageSelect,
         "Choose a stage",
-        "W/S or Up/Down: move    F / J / Enter: fight    G / K / Esc: back",
+        "W/S: move   Enter: fight   Esc: back   PAD: D-PAD / STICK, A fight, B back",
         items,
         None,
     );
 }
 
-fn menu_nav(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<Menu>, rebinding: Res<Rebinding>) {
+fn menu_nav(keys: Res<crate::MenuInput>, mut menu: ResMut<Menu>, rebinding: Res<Rebinding>) {
     // W and S could be the key being bound
     if menu.len == 0 || rebinding.0.is_some() {
         return;
     }
-    let up = keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp);
-    let down = keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown);
+    let up = keys.0.just_pressed(KeyCode::KeyW) || keys.0.just_pressed(KeyCode::ArrowUp);
+    let down = keys.0.just_pressed(KeyCode::KeyS) || keys.0.just_pressed(KeyCode::ArrowDown);
     if up {
         menu.cursor = (menu.cursor + menu.len - 1) % menu.len;
     }
@@ -339,21 +344,25 @@ fn glitch_subtitles(time: Res<Time>, mut lines: Query<(&Glitch, &mut Text2d, &mu
 }
 
 fn title_confirm(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Res<crate::MenuInput>,
     menu: Res<Menu>,
     mut mode: ResMut<Mode>,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if back_pressed(&keys) && keys.just_pressed(KeyCode::Escape) {
+    if back_pressed(&keys.0) && keys.0.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
-    } else if confirm_pressed(&keys) {
+    } else if confirm_pressed(&keys.0) {
         match menu.cursor {
             0 => {
                 *mode = Mode::VsCpu;
                 next.set(AppState::CharSelect);
             }
             1 => {
+                *mode = Mode::LocalVersus;
+                next.set(AppState::CharSelect);
+            }
+            2 => {
                 *mode = Mode::Online;
                 next.set(AppState::Online);
             }
@@ -363,7 +372,7 @@ fn title_confirm(
 }
 
 fn char_confirm(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Res<crate::MenuInput>,
     mut menu: ResMut<Menu>,
     mut picking: ResMut<Picking>,
     mut sel: ResMut<Selection>,
@@ -376,13 +385,13 @@ fn char_confirm(
 ) {
     // online you only pick your own fighter; the match starts when both are in (see `online::drive_lobby`)
     if *mode == Mode::Online {
-        if back_pressed(&keys) {
+        if back_pressed(&keys.0) {
             if let Some(l) = lobby.0.as_mut() {
                 l.leave();
             }
             info.locked = false;
             next.set(AppState::Online);
-        } else if confirm_pressed(&keys) && !info.locked {
+        } else if confirm_pressed(&keys.0) && !info.locked {
             if let Some(l) = lobby.0.as_mut() {
                 l.pick(menu.cursor as u8, true);
                 info.locked = true;
@@ -391,14 +400,14 @@ fn char_confirm(
         }
         return;
     }
-    if back_pressed(&keys) {
+    if back_pressed(&keys.0) {
         if picking.0 == 1 {
             picking.0 = 0;
             header.0 = pick_title(0, *mode);
         } else {
             next.set(AppState::Title);
         }
-    } else if confirm_pressed(&keys) {
+    } else if confirm_pressed(&keys.0) {
         sel.chars[picking.0] = menu.cursor;
         if picking.0 == 0 {
             picking.0 = 1;
@@ -414,10 +423,10 @@ fn char_confirm(
     }
 }
 
-fn stage_confirm(keys: Res<ButtonInput<KeyCode>>, menu: Res<Menu>, mut sel: ResMut<Selection>, mut next: ResMut<NextState<AppState>>) {
-    if back_pressed(&keys) {
+fn stage_confirm(keys: Res<crate::MenuInput>, menu: Res<Menu>, mut sel: ResMut<Selection>, mut next: ResMut<NextState<AppState>>) {
+    if back_pressed(&keys.0) {
         next.set(AppState::CharSelect);
-    } else if confirm_pressed(&keys) {
+    } else if confirm_pressed(&keys.0) {
         sel.stage = menu.cursor;
         next.set(AppState::Fight);
     }
@@ -445,7 +454,7 @@ fn spawn_options(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<S
         &mut menu,
         AppState::Options,
         "Options",
-        "W/S: move    A/D or Left/Right: change    F / J / Enter: select    Esc: back",
+        "WASD: move/change   Enter: select   Esc: back   PAD: D-PAD / STICK, A/B",
         items,
         None,
     );
@@ -453,15 +462,15 @@ fn spawn_options(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<S
 
 /// Left/right change the volume and display mode (Enter also cycles the display mode).
 fn options_confirm(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Res<crate::MenuInput>,
     menu: Res<Menu>,
     mut settings: ResMut<Settings>,
     mut items: Query<&mut MenuItem>,
     mut next: ResMut<NextState<AppState>>,
 ) {
-    let step = left_right(&keys);
-    let confirm = confirm_pressed(&keys);
-    if back_pressed(&keys) {
+    let step = left_right(&keys.0);
+    let confirm = confirm_pressed(&keys.0);
+    if back_pressed(&keys.0) {
         next.set(AppState::Title);
         return;
     }
@@ -500,6 +509,20 @@ fn controls_labels(settings: &Settings, rebinding: Option<usize>) -> Vec<String>
 
 fn spawn_controls(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<Settings>, mut rebinding: ResMut<Rebinding>) {
     rebinding.0 = None;
+    // A tiny pixel controller and its fixed fight bindings, drawn with nearest-neighbour squares.
+    let pixels = ["  ####    ####  ", " ############## ", "################", "##  #####  #####", "# +++ ### BY ###", "##  ##### XA ###", "###  ######  ###", "##            ##", "#              #"];
+    for (row, line) in pixels.iter().enumerate() {
+        for (col, pixel) in line.chars().enumerate() {
+            let color = match pixel {
+                '#' => Color::srgb(0.35, 0.38, 0.48),
+                '+' => Color::srgb(0.8, 0.8, 0.85),
+                'A' | 'B' | 'X' | 'Y' => Color::srgb(1.0, 0.75, 0.3),
+                _ => continue,
+            };
+            commands.spawn((DespawnOnExit(AppState::Controls), Sprite::from_color(color, Vec2::splat(2.0)), Transform::from_xyz(-170.0 + col as f32 * 2.0, -104.0 - row as f32 * 2.0, 5.0)));
+        }
+    }
+    spawn_text(&mut commands, AppState::Controls, "PAD: MOVE   X LIGHT   Y HEAVY   B SPECIAL   A BLOCK   LB/RB ROLL".into(), 7.0, Color::srgb(0.8, 0.8, 0.85), -112.0);
     let items = controls_labels(&settings, None).into_iter().map(|label| Item::new(label, Color::WHITE)).collect();
     spawn_menu(
         &mut commands,
@@ -514,7 +537,8 @@ fn spawn_controls(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<
 
 /// Pick a control, then the next key pressed is its new one (a key another control had is swapped).
 fn controls_confirm(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Res<crate::MenuInput>,
+    physical_keys: Res<ButtonInput<KeyCode>>,
     menu: Res<Menu>,
     mut settings: ResMut<Settings>,
     mut rebinding: ResMut<Rebinding>,
@@ -522,15 +546,15 @@ fn controls_confirm(
     mut next: ResMut<NextState<AppState>>,
 ) {
     if let Some(i) = rebinding.0 {
-        if keys.just_pressed(KeyCode::Escape) {
+        if keys.0.just_pressed(KeyCode::Escape) {
             rebinding.0 = None;
-        } else if let Some(&key) = keys.get_just_pressed().find(|&&k| settings::bindable(k)) {
+        } else if let Some(&key) = physical_keys.get_just_pressed().find(|&&k| settings::bindable(k)) {
             settings.bind(i, key);
             rebinding.0 = None;
         }
-    } else if back_pressed(&keys) {
+    } else if back_pressed(&keys.0) {
         next.set(AppState::Options);
-    } else if confirm_pressed(&keys) {
+    } else if confirm_pressed(&keys.0) {
         match menu.cursor {
             i if i < ACTIONS.len() => rebinding.0 = Some(i),
             i if i == ACTIONS.len() => settings.keys = Settings::default().keys,
