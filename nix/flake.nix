@@ -13,7 +13,7 @@
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              cargo rustc rust-analyzer rustfmt clippy pkg-config
+              cargo rustc rust-analyzer rustfmt clippy pkg-config nodejs
               curl jq just nixd zsh (python3.withPackages (ps: [ ps.pillow ]))
             ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
               alsa-lib udev vulkan-loader libxkbcommon wayland

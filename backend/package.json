@@ -1,0 +1,17 @@
+{
+  "name": "alfendrof-multiplayer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "check": "npm run types && tsc --noEmit",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types --strict-vars=false"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "wrangler": "4.158.0",
+    "ws": "^8.22.1"
+  }
+}
