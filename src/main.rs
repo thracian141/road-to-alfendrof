@@ -275,14 +275,23 @@ fn assign_controllers(pads: Query<Entity, With<Gamepad>>, mut slots: ResMut<Cont
 #[derive(Resource, Default)]
 struct MenuInput(ButtonInput<KeyCode>);
 
+#[derive(Resource, Default)]
+struct ControllerPause(bool);
+
+impl std::ops::DerefMut for MenuInput {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
 impl std::ops::Deref for MenuInput {
     type Target = ButtonInput<KeyCode>;
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
-fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut input: ResMut<MenuInput>, mut previous: Local<[bool; 4]>) {
+fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut input: ResMut<MenuInput>, mut previous: Local<[bool; 4]>, state: Res<State<AppState>>, pause: Res<menus::Pause>, sim: Res<Sim>, mut pause_press: ResMut<ControllerPause>) {
     use bevy::input::gamepad::{GamepadAxis as A, GamepadButton as B};
     input.0 = keys.clone();
+    pause_press.0 = false;
+    let menu_buttons = *state.get() != AppState::Fight || pause.open() || sim.0.phase == Phase::MatchOver;
     let mut directions = [false; 4];
     for pad in &pads {
         let x = pad.get(A::LeftStickX).unwrap_or(0.0);
@@ -291,8 +300,9 @@ fn controller_menu_input(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>,
         directions[1] |= pad.pressed(B::DPadDown) || y < -0.5;
         directions[2] |= pad.pressed(B::DPadLeft) || x < -0.5;
         directions[3] |= pad.pressed(B::DPadRight) || x > 0.5;
-        if pad.just_pressed(B::South) || pad.just_pressed(B::Start) { input.0.press(KeyCode::Enter); }
-        if pad.just_pressed(B::East) { input.0.press(KeyCode::Escape); }
+        if menu_buttons && pad.just_pressed(B::South) { input.0.press(KeyCode::Enter); }
+        if menu_buttons && pad.just_pressed(B::East) { input.0.press(KeyCode::Escape); }
+        pause_press.0 |= pad.just_pressed(B::Start);
     }
     for (i, key) in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight].into_iter().enumerate() {
         if directions[i] && !previous[i] { input.0.press(key); }
@@ -352,6 +362,7 @@ fn main() {
         .insert_resource(Stages(load_dir("stages", StageData::from_ron)))
         .insert_resource(DebugView(dev.debug))
         .init_resource::<MenuInput>()
+        .init_resource::<ControllerPause>()
         .init_resource::<ControllerSlots>()
         .add_systems(PreUpdate, assign_controllers.after(bevy::input::InputSystems))
         .add_systems(PreUpdate, controller_menu_input.after(bevy::input::InputSystems))
@@ -369,7 +380,7 @@ fn main() {
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_controller_legend, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
             rings.0.clear();
             clear.0 = MENU_BACKGROUND;
@@ -697,7 +708,7 @@ fn controller_fight_input(pad: &Gamepad) -> t2f::sim::Input {
             (pad.pressed(B::East), Input::SPECIAL),
             (pad.pressed(B::South), Input::BLOCK),
             (pad.pressed(B::LeftTrigger), Input::ROLL_LEFT),
-            (pad.pressed(B::RightTrigger), Input::ROLL_RIGHT),
+            (pad.pressed(B::RightTrigger2) || pad.get(B::RightTrigger2).unwrap_or(0.0) > 0.5, Input::ROLL_RIGHT),
         ] { if pressed { input.0 |= flag; } }
     input
 }
@@ -991,5 +1002,43 @@ fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, mu
     if keys.0.just_pressed(KeyCode::Escape) && !pause.open() && matches!(sim.0.phase, Phase::MatchOver | Phase::Briefing(_)) {
         commands.remove_resource::<online::NetSession>();
         next.set(AppState::Title);
+    }
+}
+
+#[cfg(test)]
+mod controller_tests {
+    use super::*;
+    use bevy::input::gamepad::GamepadButton as B;
+
+    #[test]
+    fn controller_combat_buttons_match_ps_and_xbox_positions() {
+        for (button, action) in [(B::South, Input::BLOCK), (B::West, Input::LIGHT), (B::North, Input::HEAVY), (B::East, Input::SPECIAL), (B::LeftTrigger, Input::ROLL_LEFT), (B::RightTrigger2, Input::ROLL_RIGHT)] {
+            let mut pad = Gamepad::default();
+            pad.digital_mut().press(button);
+            assert_eq!(controller_fight_input(&pad).0, action);
+        }
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(B::RightTrigger);
+        assert_eq!(controller_fight_input(&pad).0, 0, "R1/RB must not roll");
+    }
+
+    #[test]
+    fn combat_face_buttons_do_not_trigger_menu_actions_and_options_pauses() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<MenuInput>()
+            .init_resource::<ControllerPause>()
+            .init_resource::<menus::Pause>()
+            .init_resource::<Sim>()
+            .insert_resource(State::new(AppState::Fight))
+            .add_systems(Update, controller_menu_input);
+        let mut pad = Gamepad::default();
+        for button in [B::South, B::East, B::Start] { pad.digital_mut().press(button); }
+        app.world_mut().spawn(pad);
+        app.update();
+        let menu = app.world().resource::<MenuInput>();
+        assert!(!menu.just_pressed(KeyCode::Enter));
+        assert!(!menu.just_pressed(KeyCode::Escape));
+        assert!(app.world().resource::<ControllerPause>().0);
     }
 }

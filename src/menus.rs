@@ -138,7 +138,7 @@ pub struct FillView;
 #[derive(Component)]
 struct TitleBottomShade;
 
-const TITLE_SHADE_TOP: f32 = -14.0;
+const TITLE_SHADE_TOP: f32 = 0.0;
 
 fn visible_menu_size(aspect: f32) -> Vec2 {
     let base = Vec2::new(crate::VIEW_W, crate::VIEW_H);
@@ -258,16 +258,16 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
     let header = spawn_text(commands, state.clone(), title.into(), 24.0, Color::srgb(1.0, 0.9, 0.4), 82.0);
     commands.entity(header).insert(Header);
     // (long hints take two lines; the text grows upwards from just above the bottom of the panel)
-    let hint = spawn_text(commands, state.clone(), fit(hint, LINE_CHARS), 9.0, Color::srgb(0.6, 0.6, 0.7), -99.0);
+    let hint = spawn_text(commands, state.clone(), if state == AppState::Title { hint.to_string() } else { fit(hint, LINE_CHARS) }, if state == AppState::Title { 7.0 } else { 9.0 }, Color::srgb(0.6, 0.6, 0.7), -99.0);
     commands.entity(hint).insert(Anchor::BOTTOM_CENTER);
 
     // rows with pictures need more room: four to a page, the rest on the next; long lists of text get smaller
     let with_pictures = items.iter().any(|i| i.portrait.is_some());
     let compact = !with_pictures && items.len() > 6;
     menu.per_page = if with_pictures { 4 } else { items.len().max(1) };
-    let spacing = if state == AppState::Title { 14.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 12.0 } else { 22.0 };
+    let spacing = if state == AppState::Title { 16.0 } else if with_pictures { (140.0 / items.len().max(1) as f32).min(40.0) } else if compact { 10.0 } else { 22.0 };
     let top = top_override.unwrap_or(if with_pictures { 56.0 } else if compact { 62.0 } else { 40.0 });
-    let size = if compact { 8.0 } else { 16.0 };
+    let size = if state == AppState::Title { 12.0 } else if compact { 8.0 } else { 16.0 };
     for (index, item) in items.into_iter().enumerate() {
         let page = Page(index / menu.per_page);
         let y = top - (index % menu.per_page) as f32 * spacing;
@@ -349,9 +349,9 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
         &mut menu,
         state,
         "",
-        "W/S: move   Enter: select   Esc: quit   PAD: D-PAD / STICK, A select, B back",
+        "Move: W/S, D-pad or stick\nSelect: Enter / Cross / A   Back: Esc / Circle / B",
         vec![Item::new("vs CPU", white), Item::new("Local 2 players", white), Item::new("2v2 - 4 players", white), online, Item::new("Options", white)],
-        Some(-23.0),
+        Some(-8.0),
     );
 }
 
@@ -921,23 +921,10 @@ fn controls_labels(settings: &Settings, rebinding: Option<usize>) -> Vec<String>
     labels
 }
 
-fn spawn_controls(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<Settings>, mut rebinding: ResMut<Rebinding>) {
+fn spawn_controls(mut commands: Commands, mut menu: ResMut<Menu>, settings: Res<Settings>, mut rebinding: ResMut<Rebinding>, assets: Res<AssetServer>) {
     rebinding.0 = None;
-    // A tiny pixel controller and its fixed fight bindings, drawn with nearest-neighbour squares.
-    let pixels = ["  ####    ####  ", " ############## ", "################", "##  #####  #####", "# +++ ### BY ###", "##  ##### XA ###", "###  ######  ###", "##            ##", "#              #"];
-    for (row, line) in pixels.iter().enumerate() {
-        for (col, pixel) in line.chars().enumerate() {
-            let color = match pixel {
-                '#' => Color::srgb(0.35, 0.38, 0.48),
-                '+' => Color::srgb(0.8, 0.8, 0.85),
-                'A' | 'B' | 'X' | 'Y' => Color::srgb(1.0, 0.75, 0.3),
-                _ => continue,
-            };
-            commands.spawn((DespawnOnExit(AppState::Controls), Sprite::from_color(color, Vec2::splat(2.0)), Transform::from_xyz(-170.0 + col as f32 * 2.0, -104.0 - row as f32 * 2.0, 5.0)));
-        }
-    }
-    spawn_text(&mut commands, AppState::Controls, "PAD: MOVE   X LIGHT   Y HEAVY   B SPECIAL   A BLOCK   LB/RB ROLL".into(), 7.0, Color::srgb(0.8, 0.8, 0.85), -112.0);
     build_controls(&mut commands, &mut menu, AppState::Controls, &settings);
+    crate::render::controller_legend(&mut commands, &assets, AppState::Controls, None, -81.0);
 }
 
 fn build_controls(commands: &mut Commands, menu: &mut Menu, state: AppState, settings: &Settings) {
@@ -947,9 +934,9 @@ fn build_controls(commands: &mut Commands, menu: &mut Menu, state: AppState, set
         menu,
         state,
         "Controls",
-        "Enter: change, then press the new key    Esc: back",
+        "",
         items,
-        None,
+        Some(64.0),
     );
 }
 
@@ -1044,11 +1031,15 @@ fn controls_open(state: Res<State<AppState>>, pause: Res<Pause>) -> bool {
 
 /// Esc opens the pause menu in a fight that is on (not before it starts or after it ends); in it, the main screen
 /// and the surrender question are answered here (the other screens by the options and controls systems).
-fn pause_main(keys: Res<crate::MenuInput>, mut pause: ResMut<Pause>, menu: Res<Menu>, sim: Res<Sim>, mut surrender: ResMut<Surrendering>) {
+fn pause_main(pad_pause: Res<crate::ControllerPause>, keys: Res<crate::MenuInput>, mut pause: ResMut<Pause>, menu: Res<Menu>, sim: Res<Sim>, mut surrender: ResMut<Surrendering>) {
     let live = matches!(sim.0.phase, Phase::Countdown(_) | Phase::Fighting | Phase::RoundEnd(_));
     if pause.open() && !live {
         // the match ended behind the menu (the other player gave up)
         *pause = Pause::Closed;
+        return;
+    }
+    if live && pad_pause.0 {
+        *pause = if pause.open() { Pause::Closed } else { Pause::Main };
         return;
     }
     match *pause {
@@ -1087,6 +1078,7 @@ fn pause_main(keys: Res<crate::MenuInput>, mut pause: ResMut<Pause>, menu: Res<M
 /// Draw the screen of the pause menu that is open, replacing the last one.
 fn sync_pause(
     mut commands: Commands,
+    assets: Res<AssetServer>,
     pause: Res<Pause>,
     mut shown: Local<Pause>,
     mut menu: ResMut<Menu>,
@@ -1112,7 +1104,10 @@ fn sync_pause(
             spawn_menu(&mut commands, &mut menu, AppState::Overlay, title, "W/S or Up/Down: move    Enter: select    Esc: resume", items, None);
         }
         Pause::Options => build_options(&mut commands, &mut menu, AppState::Overlay, &settings),
-        Pause::Controls => build_controls(&mut commands, &mut menu, AppState::Overlay, &settings),
+        Pause::Controls => {
+            build_controls(&mut commands, &mut menu, AppState::Overlay, &settings);
+            crate::render::controller_legend(&mut commands, &assets, AppState::Overlay, None, -81.0);
+        },
         Pause::Surrender => {
             let items = vec![Item::new("No, keep fighting", Color::WHITE), Item::new("Yes, surrender", red)];
             spawn_menu(&mut commands, &mut menu, AppState::Overlay, "Surrender?", "You lose the match.    Esc: back", items, None);
@@ -1190,12 +1185,13 @@ mod tests {
     fn vertical_keys_move_the_menu_cursor() {
         for (key, expected) in [(KeyCode::KeyW, 0), (KeyCode::ArrowUp, 0), (KeyCode::KeyS, 2), (KeyCode::ArrowDown, 2)] {
             let mut app = App::new();
-            app.init_resource::<ButtonInput<KeyCode>>()
+            app.init_resource::<crate::MenuInput>()
+            .init_resource::<crate::ControllerPause>()
                 .insert_resource(Menu { cursor: 1, len: 3, per_page: 3 })
                 .init_resource::<Rebinding>()
                 .add_message::<UiSound>()
                 .add_systems(Update, menu_nav);
-            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+            app.world_mut().resource_mut::<crate::MenuInput>().press(key);
             app.update();
             assert_eq!(app.world().resource::<Menu>().cursor, expected);
         }
@@ -1206,16 +1202,17 @@ mod tests {
         let mut app = App::new();
         let mut sim = Sim::default();
         sim.0.phase = Phase::Fighting;
-        app.init_resource::<ButtonInput<KeyCode>>()
+        app.init_resource::<crate::MenuInput>()
+            .init_resource::<crate::ControllerPause>()
             .init_resource::<Pause>()
             .init_resource::<Menu>()
             .init_resource::<Surrendering>()
             .insert_resource(sim)
             .add_systems(Update, pause_main);
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
+        app.world_mut().resource_mut::<crate::MenuInput>().press(KeyCode::Escape);
         app.update();
         assert_eq!(*app.world().resource::<Pause>(), Pause::Main);
-        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        let mut keys = app.world_mut().resource_mut::<crate::MenuInput>();
         keys.clear();
         keys.press(KeyCode::Enter);
         app.update();
