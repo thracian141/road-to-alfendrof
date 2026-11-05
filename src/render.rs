@@ -900,7 +900,7 @@ pub struct SkillPiece { player: usize, slot: usize, y: f32, role: SkillRole }
 pub struct SkillText { player: usize, slot: usize, timer: bool }
 const SKILL_SIZE: f32 = 24.0;
 
-fn ps_controller(vendor: Option<u16>, name: &str) -> bool {
+pub(crate) fn ps_controller(vendor: Option<u16>, name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     vendor == Some(0x054c) || ["dualsense", "dualshock", "playstation", "sony", "ps4", "ps5"].iter().any(|s| name.contains(s))
 }
@@ -1712,5 +1712,24 @@ mod controller_prompt_tests {
         assert!(ps_controller(None, "PS4 Controller"));
         assert!(!ps_controller(Some(0x045e), "Xbox Wireless Controller"));
         assert!(!ps_controller(None, "Xbox 360 Controller"));
+    }
+}
+
+/// Shrink match HUD around its screen anchors; pause menus keep their normal size.
+pub fn compact_hud(mut commands: Commands, hud: Single<(Entity, &Children), With<crate::HudRoot>>, transforms: Query<&Transform>) {
+    let (root, children) = *hud;
+    let scale = 0.68;
+    let mut groups = Vec::new();
+    for (x, y) in [(-192.0, 108.0), (192.0, 108.0), (-192.0, -108.0), (192.0, -108.0)] {
+        groups.push(commands.spawn((ChildOf(root), Transform::from_xyz(x * (1.0 - scale), y * (1.0 - scale), 0.0).with_scale(Vec3::new(scale, scale, 1.0)), Visibility::default())).id());
+    }
+    for child in children.iter() {
+        let Ok(tf) = transforms.get(child) else { continue };
+        let p = tf.translation;
+        if p.y > 35.0 && p.x.abs() > 12.0 {
+            commands.entity(child).insert(ChildOf(groups[if p.x < 0.0 { 0 } else { 1 }]));
+        } else if p.y < -20.0 {
+            commands.entity(child).insert(ChildOf(groups[if p.x < 0.0 { 2 } else { 3 }]));
+        }
     }
 }

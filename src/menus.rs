@@ -43,6 +43,7 @@ impl Plugin for MenuPlugin {
                     carousel_nav.run_if(in_state(AppState::CharSelect)),
                     menu_click.run_if(menu_live).run_if(not(in_state(AppState::Online))),
                     menu_labels.run_if(menu_live),
+                    controller_menu_hints,
                     menu_pages.run_if(menu_live),
                     (carousel_slide, carousel_info).run_if(in_state(AppState::CharSelect)),
                     glitch_subtitles.run_if(menu_live),
@@ -228,7 +229,9 @@ pub fn fit(text: &str, max: usize) -> String {
 }
 
 fn spawn_text(commands: &mut Commands, state: AppState, text: String, size: f32, color: Color, y: f32) -> Entity {
-    commands
+    let hint = text.contains("Enter") && text.contains("Esc") && size <= 9.0;
+    let original = text.clone();
+    let entity = commands
         .spawn((
             DespawnOnExit(state),
             Text2d::new(text),
@@ -238,7 +241,9 @@ fn spawn_text(commands: &mut Commands, state: AppState, text: String, size: f32,
             TextColor(color),
             Transform::from_xyz(0.0, y, 5.0),
         ))
-        .id()
+        .id();
+    if hint { commands.entity(entity).insert(MenuHint { original, visual: None }); }
+    entity
 }
 
 /// Which page of a long menu a piece of it is on.
@@ -1218,4 +1223,29 @@ mod tests {
         app.update();
         assert_eq!(*app.world().resource::<Pause>(), Pause::Closed);
     }
+}
+
+#[derive(Component)]
+pub struct MenuHint { original: String, visual: Option<Entity> }
+#[derive(Component)]
+pub struct MenuControllerVisual;
+#[derive(Component)]
+pub struct MenuControllerIcon(&'static str);
+
+fn controller_menu_hints(mut commands: Commands, state: Res<State<AppState>>, pads: Query<(Entity, &Gamepad, Option<&Name>)>, activity: Res<crate::InputActivity>, assets: Res<AssetServer>, mut hints: Query<(Entity, &mut MenuHint, &mut Text2d)>, mut visuals: Query<&mut Visibility, With<MenuControllerVisual>>, mut icons: Query<(&MenuControllerIcon, &mut Sprite)>) {
+    let family = pads.iter().max_by_key(|(entity, _, _)| activity.pads.get(entity).copied().unwrap_or(0)).map(|(_, pad, name)| if crate::render::ps_controller(pad.vendor_id(), name.map_or("", |n| n.as_str())) { "ps" } else { "xbox" });
+    for (entity, mut hint, mut text) in &mut hints {
+        if hint.visual.is_none() {
+            let root = commands.spawn((ChildOf(entity), MenuControllerVisual, Transform::default(), Visibility::Hidden)).id();
+            for (x, action, label) in [(-145.0, "block", "SELECT"), (-30.0, "ultimate", "BACK"), if *state.get() == AppState::Fight { (75.0, "pause", "RESUME") } else { (75.0, "dpad", "MOVE") }] {
+                commands.spawn((ChildOf(root), MenuControllerIcon(action), Sprite { image: assets.load(format!("ui/controls/{}_{}.png", family.unwrap_or("xbox"), action)), custom_size: Some(Vec2::splat(12.0)), ..default() }, Transform::from_xyz(x, 8.0, 1.0)));
+                commands.spawn((ChildOf(root), Text2d::new(label), crate::pixel_font(8.0), TextColor(Color::WHITE), Transform::from_xyz(x + 32.0, 8.0, 1.0)));
+            }
+            hint.visual = Some(root);
+        }
+        if let Some(root) = hint.visual { if let Ok(mut visibility) = visuals.get_mut(root) { *visibility = if family.is_some() { Visibility::Inherited } else { Visibility::Hidden }; } }
+        let value = if family.is_some() { "" } else { &hint.original };
+        if text.0 != value { text.0 = value.to_string(); }
+    }
+    if let Some(family) = family { for (icon, mut sprite) in &mut icons { sprite.image = assets.load(format!("ui/controls/{family}_{}.png", icon.0)); } }
 }

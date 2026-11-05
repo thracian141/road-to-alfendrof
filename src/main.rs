@@ -397,7 +397,7 @@ fn main() {
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn, render::compact_hud).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
             rings.0.clear();
             clear.0 = MENU_BACKGROUND;
@@ -987,8 +987,13 @@ fn restart_match(
     mode: Res<Mode>,
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
+    mut was_over: Local<bool>,
 ) {
-    if menus::confirm_pressed(&input.0) && sim.0.phase == Phase::MatchOver {
+    let over = sim.0.phase == Phase::MatchOver;
+    let just_ended = over && !*was_over;
+    *was_over = over;
+    if just_ended { return; }
+    if menus::confirm_pressed(&input.0) && over {
         if *mode == Mode::Online {
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
@@ -1026,6 +1031,28 @@ fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, mu
 mod controller_tests {
     use super::*;
     use bevy::input::gamepad::GamepadButton as B;
+
+    #[test]
+    fn surrender_confirmation_cannot_immediately_start_a_rematch() {
+        let mut app = App::new();
+        let data = CharacterData::from_ron(include_str!("sim/classic_fighter.ron")).unwrap();
+        let mut sim = Sim(GameState::team_match());
+        sim.0.phase = Phase::MatchOver;
+        sim.0.wins = [0, 2];
+        let mut input = MenuInput::default();
+        input.0.press(KeyCode::Enter);
+        app.insert_resource(sim).insert_resource(Roster(vec![data]))
+            .insert_resource(Selection::default()).insert_resource(Mode::LocalTeams)
+            .insert_resource(input).init_resource::<NextState<AppState>>()
+            .add_systems(Update, restart_match);
+        app.update();
+        assert_eq!(app.world().resource::<Sim>().0.phase, Phase::MatchOver);
+        let mut input = app.world_mut().resource_mut::<MenuInput>();
+        input.0.reset_all();
+        input.0.press(KeyCode::Enter);
+        app.update();
+        assert_eq!(app.world().resource::<Sim>().0.phase, Phase::Countdown(0));
+    }
 
     #[test]
     fn controller_combat_buttons_match_ps_and_xbox_positions() {
