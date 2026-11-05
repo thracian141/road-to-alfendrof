@@ -1062,12 +1062,12 @@ pub fn animate_zones(sim: Res<Sim>, handles: Res<FrameHandles>, mut sprites: Que
 pub struct CigaretteIcon(pub usize, pub usize);
 
 /// The row of cigarettes under each health bar, for a character who carries them.
-pub fn spawn_cigarette_hud(mut commands: Commands, hud: Single<Entity, With<crate::HudRoot>>) {
+pub fn spawn_cigarette_hud(mut commands: Commands, sim: Res<Sim>, hud: Single<Entity, With<crate::HudRoot>>) {
     commands.entity(*hud).with_children(|h| {
-        for side in 0..2usize {
-            let dir = if side == 0 { -1.0 } else { 1.0 };
+        for side in 0..sim.0.fighters.len() {
+            let dir = if side % 2 == 0 { -1.0 } else { 1.0 };
             let left = dir * (crate::BAR_EDGE - crate::BAR_W / 2.0) - crate::BAR_W / 2.0;
-            let y = crate::BAR_Y - crate::BAR_H / 2.0 - 12.0;
+            let y = crate::BAR_Y - (side / 2) as f32 * 36.0 - 28.0;
             for k in 0..7usize {
                 let x = left + 5.0 + k as f32 * 9.0;
                 h.spawn((CigaretteIcon(side, k), Sprite::from_color(Color::srgb(0.96, 0.95, 0.9), Vec2::new(7.0, 2.0)), Transform::from_xyz(x, y, 10.1), Visibility::Hidden));
@@ -1702,4 +1702,22 @@ pub fn animate_away(sim: Res<Sim>, mut labels: Query<(&AwayLabel, &mut Transform
         set_ne!(tf.translation.x, (f.x / PX) as f32);
         set_ne!(tf.translation.y, GROUND_Y + (f.y / PX) as f32 + FULL_H as f32 + 10.0);
     }
+}
+
+/// Shared pixel-art PS/Xbox legend; icons use physical button positions.
+pub fn controller_legend(commands: &mut Commands, assets: &AssetServer, state: AppState, parent: Option<Entity>, y: f32) {
+    let entries = [("dpad", "MOVE"), ("stick", "MOVE"), ("pause", "PAUSE"), ("block", "BLOCK"), ("light", "LIGHT"), ("heavy", "HEAVY"), ("ultimate", "ULT"), ("roll_left", "ROLL L"), ("roll_right", "ROLL R")];
+    for (column, (action, label)) in entries.into_iter().enumerate() {
+        let x = -169.0 + column as f32 * 29.0;
+        let text = commands.spawn((DespawnOnExit(state.clone()), Text2d::new(label), TextFont { font_size: FontSize::Px(6.0), ..crate::pixel_font(8.0) }, TextColor(Color::srgb(0.85, 0.88, 0.95)), Transform::from_xyz(x, y + 11.0, 10.5))).id();
+        if let Some(parent) = parent { commands.entity(text).insert(ChildOf(parent)); }
+        for (row, family) in ["ps", "xbox"].into_iter().enumerate() {
+            let icon = commands.spawn((DespawnOnExit(state.clone()), Sprite { image: assets.load(format!("ui/controls/{family}_{action}.png")), custom_size: Some(Vec2::splat(13.0)), ..default() }, Transform::from_xyz(x, y - row as f32 * 16.0, 10.5))).id();
+            if let Some(parent) = parent { commands.entity(icon).insert(ChildOf(parent)); }
+        }
+    }
+}
+
+pub fn spawn_controller_legend(mut commands: Commands, assets: Res<AssetServer>, hud: Single<Entity, With<crate::HudRoot>>) {
+    controller_legend(&mut commands, &assets, AppState::Fight, Some(*hud), -81.0);
 }
