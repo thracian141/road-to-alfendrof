@@ -345,7 +345,7 @@ fn main() {
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_skill_bar).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>| {
             clear.0 = MENU_BACKGROUND;
             fixed.set_timestep_hz(60.0);
@@ -356,7 +356,7 @@ fn main() {
         .add_systems(
             Update,
             (
-                render::pose_bodies,
+                (render::pose_bodies, render::animate_team_markers),
                 render::animate_body,
                 render::animate_crescent,
                 render::animate_stars,
@@ -525,6 +525,15 @@ fn spawn_fight(
         ));
         if layer.glow {
             e.insert(Glow);
+        }
+    }
+
+    for ledge in &sim.0.platforms {
+        let width = (ledge.right - ledge.left) as f32 / PX as f32;
+        let center = (ledge.right + ledge.left) as f32 / (2 * PX) as f32;
+        let top = GROUND_Y + ledge.height as f32 / PX as f32;
+        for (height, offset, color) in [(9.0, -5.5, Color::srgb(0.18, 0.23, 0.28)), (3.0, -1.5, Color::srgb(0.65, 0.76, 0.79))] {
+            commands.spawn((scoped.clone(), Sprite::from_color(color, Vec2::new(width, height)), Transform::from_xyz(center, top + offset, 0.5)));
         }
     }
 

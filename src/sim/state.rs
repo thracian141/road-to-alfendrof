@@ -94,6 +94,10 @@ pub struct Rose {
     pub falling: bool,
 }
 
+/// One-way airborne ledge in simulation subpixels.
+#[derive(Clone, Copy, Hash, Debug)]
+pub struct Platform { pub left: i32, pub right: i32, pub height: i32 }
+
 /// The whole simulation. `Clone` + `Hash` make rollback and desync checks cheap. Character data
 /// isn't part of the state: it's constant and passed to `step`.
 #[derive(Clone, Hash, Debug)]
@@ -102,6 +106,7 @@ pub struct GameState {
     pub teams: Vec<u8>,
     pub targets: Vec<usize>,
     pub stage_half_width: i32,
+    pub platforms: Vec<Platform>,
     pub fighters: Vec<Fighter>,
     /// Every projectile in flight.
     pub projectiles: Vec<Projectile>,
@@ -154,6 +159,7 @@ impl GameState {
             teams: vec![0, 1],
             targets: vec![1, 0],
             stage_half_width: Self::STAGE_HALF_WIDTH,
+            platforms: Vec::new(),
             fighters: Self::starting_fighters().to_vec(),
             projectiles: Vec::new(),
             minions: Vec::new(),
@@ -186,6 +192,8 @@ impl GameState {
         state.teams = vec![0, 1, 0, 1];
         state.targets = vec![1, 0, 1, 0];
         state.stage_half_width = 700 * PX;
+        state.platforms = [(-530, -350, 65), (-240, -70, 110), (70, 240, 110), (350, 530, 65), (-85, 85, 185)]
+            .into_iter().map(|(left, right, height)| Platform { left: left * PX, right: right * PX, height: height * PX }).collect();
         state.fighters = vec![Fighter::new(-180 * PX, 1), Fighter::new(180 * PX, -1), Fighter::new(-280 * PX, 1), Fighter::new(280 * PX, -1)];
         state.ravens = vec![Raven::idle(); 4];
         state
@@ -210,6 +218,11 @@ impl GameState {
         let inputs = if fighting { inputs } else { &neutral };
 
         for i in 0..self.fighters.len() {
+            let f = &self.fighters[i];
+            let x = f.x + f.vx;
+            let floor = self.platforms.iter().filter(|p| x >= p.left && x <= p.right && f.y >= p.height)
+                .map(|p| p.height).max().unwrap_or(0);
+            self.fighters[i].floor_y = floor;
             self.fighters[i].raven_away = self.ravens[i].active;
             let input = if self.fighters[i].health > 0 { inputs[i] } else { Input::default() };
             self.fighters[i].step(input, chars[i]);
@@ -1321,6 +1334,36 @@ mod tests {
         s.fighters[0].x = -18 * PX;
         s.fighters[1].x = 18 * PX;
         s
+    }
+
+    #[test]
+    fn airborne_platforms_support_landing_jumping_and_walking_off() {
+        let mut s = GameState::team_match();
+        let c = ayz();
+        let p = s.platforms[0];
+        s.fighters[0].x = (p.left + p.right) / 2;
+        s.fighters[0].y = p.height + 2 * PX;
+        s.fighters[0].vy = -3 * PX;
+        s.fighters[0].state = FighterState::Jump;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert_eq!(s.fighters[0].y, p.height);
+        assert!(s.fighters[0].grounded());
+        s.step([Input(Input::UP), Input::default(), Input::default(), Input::default()], [&c; 4]);
+        assert!(s.fighters[0].y > p.height);
+        s.fighters[0].x = p.right + 20 * PX;
+        s.fighters[0].y = p.height;
+        s.fighters[0].vy = 0;
+        s.fighters[0].state = FighterState::Idle;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert!(s.fighters[0].y < p.height);
+        // Rising through the underside must not snap the fighter onto the ledge.
+        s.fighters[0].x = (p.left + p.right) / 2;
+        s.fighters[0].y = p.height - 10 * PX;
+        s.fighters[0].vy = 3 * PX;
+        s.fighters[0].state = FighterState::Jump;
+        s.step([Input::default(); 4], [&c; 4]);
+        assert!(s.fighters[0].y < p.height);
+        assert!(!s.fighters[0].grounded());
     }
 
     #[test]

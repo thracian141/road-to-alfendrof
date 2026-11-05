@@ -1342,3 +1342,51 @@ pub fn animate_scribe_effects(
         sprite.color = if *core { Color::srgba(1.0, 1.0, 0.95, fade) } else { Color::srgba(1.0, 0.88, 0.45, 0.55 * fade) };
     }
 }
+
+#[derive(Component)]
+pub struct TeamMarker { player: usize, offset: Vec2, glow: bool }
+
+fn player_glow(player: usize) -> Color {
+    [Color::srgb(0.2, 0.85, 1.0), Color::srgb(1.0, 0.35, 0.4), Color::srgb(0.45, 1.0, 0.35), Color::srgb(0.85, 0.4, 1.0)][player]
+}
+
+pub fn spawn_team_markers(mut commands: Commands, sim: Res<Sim>) {
+    if sim.0.fighters.len() != 4 { return; }
+    for player in 0..4 {
+        for offset in [Vec2::new(-2.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(0.0, -2.0), Vec2::new(0.0, 2.0)] {
+            commands.spawn((DespawnOnExit(AppState::Fight), TeamMarker { player, offset, glow: true }, Sprite::default(), Transform::default(), Visibility::Hidden));
+        }
+        // Pixel arrow, initially pointing right; rotated toward the selected enemy each frame.
+        for (x, y) in [(-4.0, 0.0), (-2.0, 0.0), (0.0, 0.0), (2.0, 0.0), (4.0, 0.0), (2.0, 2.0), (0.0, 4.0), (2.0, -2.0), (0.0, -4.0)] {
+            commands.spawn((DespawnOnExit(AppState::Fight), TeamMarker { player, offset: Vec2::new(x, y), glow: false }, Sprite::from_color(Color::WHITE, Vec2::splat(2.0)), Transform::default(), Visibility::Hidden));
+        }
+    }
+}
+
+pub fn animate_team_markers(sim: Res<Sim>, roster: Res<Roster>, sel: Res<Selection>, handles: Res<FrameHandles>, mut markers: Query<(&TeamMarker, &mut Sprite, &mut Transform, &mut Visibility)>) {
+    for (marker, mut sprite, mut tf, mut visible) in &mut markers {
+        let Some(f) = sim.0.fighters.get(marker.player) else { continue };
+        let target = sim.0.target(marker.player);
+        let enemy = &sim.0.fighters[target];
+        *visible = if f.hidden || f.health <= 0 || (!marker.glow && enemy.health <= 0) { Visibility::Hidden } else { Visibility::Inherited };
+        let feet = Vec2::new(f.x as f32 / PX as f32, GROUND_Y + f.y as f32 / PX as f32);
+        if marker.glow {
+            let frame = frame_for(f, &roster.0[sel.chars[marker.player]], speaking(&sim.0, marker.player), sim.0.frame);
+            let mut stem = frame.file_stem();
+            if sim.0.ravens[marker.player].active { stem.push_str("_nr"); }
+            if let Some(image) = handles.0[marker.player].get(&stem) { sprite.image = image.clone(); }
+            sprite.color = player_glow(marker.player).with_alpha(0.55);
+            let shift = (FRAME_W as f32 / 2.0 - t2f::anim::CENTRE_X as f32) * f.heading as f32;
+            tf.translation = (feet + Vec2::new(shift, FULL_H as f32 / 2.0) + marker.offset).extend(0.8);
+            tf.scale.x = f.heading as f32;
+        } else {
+            let direction = Vec2::new((enemy.x - f.x) as f32, (enemy.y - f.y) as f32).normalize_or_zero();
+            let angle = direction.y.atan2(direction.x);
+            let rotation = Quat::from_rotation_z(angle);
+            let offset = rotation * marker.offset.extend(0.0);
+            sprite.color = player_glow(target);
+            tf.translation = (feet + Vec2::new(0.0, 72.0)).extend(8.0) + offset;
+            tf.rotation = rotation;
+        }
+    }
+}

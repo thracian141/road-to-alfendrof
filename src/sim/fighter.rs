@@ -46,6 +46,8 @@ pub struct Fighter {
     pub x: i32,
     /// Height above the ground (0 = on the floor).
     pub y: i32,
+    /// Supporting floor or one-way platform height.
+    pub floor_y: i32,
     pub vx: i32,
     pub vy: i32,
     /// 1 faces right, -1 faces left.
@@ -225,6 +227,7 @@ impl Fighter {
             x,
             y: 0,
             vx: 0,
+            floor_y: 0,
             vy: 0,
             facing,
             state: FighterState::Idle,
@@ -294,7 +297,7 @@ impl Fighter {
     }
 
     pub fn grounded(&self) -> bool {
-        self.y == 0 && self.vy <= 0
+        self.y == self.floor_y && self.vy <= 0
     }
 
     /// Hurtbox height in pixels.
@@ -748,8 +751,8 @@ impl Fighter {
         self.y += self.vy;
         let as_bat = self.bat_form > 0 || (self.bat_roll && self.state == FighterState::Roll);
         self.heading = if !as_bat { self.facing } else if self.vx != 0 { self.vx.signum() } else { self.heading };
-        if self.y <= 0 {
-            self.y = 0;
+        if self.y <= self.floor_y {
+            self.y = self.floor_y;
             self.vy = 0;
             if self.state == FighterState::Jump || (self.state == FighterState::Attack && self.air_used) {
                 self.vx = 0;
