@@ -62,7 +62,14 @@ pub struct NetSession {
     pub session: ggrs::P2PSession<NetConfig>,
     pub local: usize,
     pub cloud: bool,
+    /// The connection is not up (yet, or any more): the match is not advancing, and the screen says so.
+    pub waiting: bool,
+    /// How many updates it has been waiting (it gives up after `CONNECT_TIMEOUT`).
+    pub waited: u32,
 }
+
+/// Updates (about 60 a second) a match waits for its connection before giving up: 20 seconds.
+const CONNECT_TIMEOUT: u32 = 60 * 20;
 
 #[derive(Component)]
 struct AddrText;
@@ -202,7 +209,7 @@ fn drive_lobby(
                 sel.online_teams = false;
                 names.0[player] = settings.username.clone();
                 names.0[1 - player] = peer_name;
-                commands.insert_resource(NetSession { session, local: player, cloud: false });
+                commands.insert_resource(NetSession { session, local: player, cloud: false, waiting: true, waited: 0 });
                 next.set(AppState::Fight);
             }
             Err(e) => {
@@ -459,7 +466,13 @@ pub fn step_online(
     }
     // the faster side slows down a little so the other can catch up
     fixed.set_timestep_hz(if net.session.frames_ahead() > 0 { 54.0 } else { 60.0 });
-    if net.session.current_state() == SessionState::Running {
+    net.waiting = net.session.current_state() != SessionState::Running;
+    // a connection that never comes up is given up on, with a message, instead of sitting on the countdown
+    net.waited = if net.waiting { net.waited + 1 } else { 0 };
+    if net.waited > CONNECT_TIMEOUT && problem.is_none() {
+        problem = Some("Could not connect to the other players.".to_string());
+    }
+    if !net.waiting {
         let local = net.local;
         if net.session.add_local_input(local, local_input.into()).is_ok() {
             if let Ok(requests) = net.session.advance_frame() {

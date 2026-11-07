@@ -914,8 +914,11 @@ fn sync_hud(
     mut timer: Single<&mut Text2d, (With<TimerText>, Without<BannerText>, Without<SubBannerText>)>,
     mut banner: Single<&mut Text2d, (With<BannerText>, Without<TimerText>, Without<SubBannerText>)>,
     mut sub_banner: Single<&mut Text2d, (With<SubBannerText>, Without<TimerText>, Without<BannerText>)>,
+    net: Option<Res<online::NetSession>>,
 ) {
     let s = &sim.0;
+    // online, a match whose connection is not up does not advance: say so (otherwise it sits on 3)
+    let waiting = net.is_some_and(|n| n.waiting);
     for (SpecialBar(side), mut sprite, mut tf) in &mut specials {
         let frac = s.fighters[*side].meter as f32 / Fighter::METER_MAX as f32;
         let w = BAR_W * frac.clamp(0.0, 1.0);
@@ -951,6 +954,7 @@ fn sync_hud(
     let name = |i: usize| roster.0[sel.chars[i]].name.clone();
     let new_banner = match s.phase {
         // 3, 2, 1, then FIGHT! for the first moments of the round
+        Phase::Countdown(0) if waiting => "Connecting...".to_string(),
         Phase::Countdown(n) => (3 - (n / 60).min(2)).to_string(),
         Phase::Fighting if s.timer > GameState::ROUND_FRAMES - 45 => "FIGHT!".into(),
         Phase::Fighting | Phase::Briefing(_) => String::new(),
@@ -967,6 +971,7 @@ fn sync_hud(
         banner.0 = new_banner;
     }
     let new_sub = match s.phase {
+        _ if waiting => "Waiting for the other players...".to_string(),
         Phase::MatchOver => "Enter: rematch    Esc: menu".to_string(),
         Phase::Countdown(_) => format!("Round {}", s.round),
         _ => String::new(),

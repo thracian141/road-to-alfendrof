@@ -242,6 +242,8 @@ struct Memory {
     /// (owner, slot, summoned on frame) of every minion and whether it had bitten.
     minions: Vec<(usize, u32, u32, bool)>,
     started: bool,
+    /// The countdown number whose tick has played (the sim can stand still on one: the tick plays once).
+    ticked: Option<u32>,
     round: u8,
     round_over: bool,
     match_over: bool,
@@ -274,7 +276,7 @@ fn play_fight_sounds(
     let mut start_sustain: Vec<(usize, Handle<AudioSource>)> = Vec::new();
     let s = &sim.0;
     let frame = s.frame;
-    let Memory { voice, fighters, shots, minions, started, round, round_over, match_over } = &mut *memory;
+    let Memory { voice, fighters, shots, minions, started, ticked, round, round_over, match_over } = &mut *memory;
     // a move's own cry: on the character's attack channel if it has one
     macro_rules! play_cry {
         ($name:expr, $who:expr, $move:expr) => {
@@ -292,9 +294,12 @@ fn play_fight_sounds(
     // the countdown ticks on each number, and the round-start sound says FIGHT! (`started`: it was counting down last tick)
     let counting = matches!(s.phase, Phase::Countdown(_));
     if let Phase::Countdown(n) = s.phase {
-        if n % 60 == 0 {
+        if n % 60 == 0 && *ticked != Some(n) {
             play!("ui_move", false);
         }
+        *ticked = Some(n);
+    } else {
+        *ticked = None;
     }
     if *started && s.phase == Phase::Fighting {
         play!("round_start", false);

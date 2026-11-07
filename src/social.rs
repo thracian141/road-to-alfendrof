@@ -891,6 +891,8 @@ fn drive(
                     session,
                     local,
                     cloud: true,
+                    waiting: true,
+                    waited: 0,
                 });
                 s.pending_pick = None;
                 s.picked_at = None;

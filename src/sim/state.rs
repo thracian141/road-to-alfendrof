@@ -270,6 +270,8 @@ impl GameState {
         self.away = inputs.iter().map(|i| i.has(Input::AWAY)).collect();
         if self.phase != Phase::MatchOver {
             if let Some(loser) = (0..self.fighters.len()).find(|&i| inputs[i].has(Input::SURRENDER)) {
+                // (it counts as a frame: online, the network layer counts them too and the two must agree)
+                self.frame += 1;
                 self.surrender(loser);
                 return;
             }
@@ -1971,6 +1973,7 @@ mod tests {
         s.wins = [1, 0];
         s.step([Input::default(), Input(Input::SURRENDER)], [&c, &c]);
         assert_eq!(s.phase, Phase::MatchOver);
+        assert_eq!(s.frame, 1, "a surrender takes a frame like any other step");
         assert_eq!(s.match_winner(), Some(0));
         assert_eq!(s.fighters[1].state, FighterState::Ko);
         // and the other way round, from 1-1

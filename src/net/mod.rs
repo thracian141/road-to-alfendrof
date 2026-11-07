@@ -243,4 +243,30 @@ mod tests {
         assert!(sums.iter().all(|f|*f>=220),"remote inputs did not arrive: {sums:?}");
     }
 
+    /// The same four peers, starting the way a real match does: in the countdown. They all get through its three
+    /// seconds into the fight at the same frame, and agree on the whole state.
+    #[test]
+    fn four_udp_peers_get_through_the_countdown_together() {
+        let c=load("ayz");
+        let transports=(0..4).map(|_|transport::Transport::bind(0).unwrap()).collect::<Vec<_>>();
+        let addresses=transports.iter().map(|t|format!("127.0.0.1:{}",t.port()).parse().unwrap()).collect::<Vec<SocketAddr>>();
+        let mut sessions=transports.into_iter().enumerate().map(|(local,t)|start_mesh(t.into_game_socket(),local,&addresses).unwrap()).collect::<Vec<_>>();
+        let mut states=(0..4).map(|_|{let mut s=GameState::team_match();s.phase=crate::sim::Phase::Countdown(0);s}).collect::<Vec<_>>();
+        let target=GameState::COUNTDOWN_FRAMES+60;
+        let started=std::time::Instant::now();
+        while states.iter().any(|s|s.frame<target) && started.elapsed()<Duration::from_secs(20) {
+            for (local,session) in sessions.iter_mut().enumerate(){
+                session.poll_remote_clients();
+                for event in session.events(){assert!(!matches!(event,GgrsEvent::DesyncDetected{..}|GgrsEvent::Disconnected{..}),"{event:?}");}
+                if session.current_state()==SessionState::Running && states[local].frame<target {
+                    session.add_local_input(local,pad(local as u32+1,session.current_frame() as u32)).unwrap();
+                    if let Ok(requests)=session.advance_frame(){handle_requests(&mut states[local],requests,[&c;4]);}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(states.iter().all(|s|s.frame==target),"the four sessions did not all get through the countdown: {:?}",states.iter().map(|s|s.frame).collect::<Vec<_>>());
+        assert!(states.iter().all(|s|s.phase==crate::sim::Phase::Fighting),"the fight did not start: {:?}",states.iter().map(|s|s.phase).collect::<Vec<_>>());
+    }
+
 }
