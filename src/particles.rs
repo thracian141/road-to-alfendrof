@@ -133,6 +133,11 @@ fn burst(commands: &mut Commands, seen: &mut Seen, at: Vec2, n: usize, lo: f32, 
     }
 }
 
+/// Three shades of a colour for sparks: the colour, darker, and a bright hot core.
+fn tints((r, g, b): (f32, f32, f32)) -> [Color; 3] {
+    [Color::srgb(r, g, b), Color::srgb(r * 0.6, g * 0.6, b * 0.6), Color::srgb((r + 0.35).min(1.0), (g + 0.12).min(1.0), (b + 0.12).min(1.0))]
+}
+
 pub fn emit(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -175,7 +180,9 @@ pub fn emit(
                     burst(&mut commands, &mut seen, at, 6, 40.0, 110.0, &guard, 2.0, 0.25, 0.0);
                 } else {
                     let n = 7 + (lost / 8) as usize;
-                    burst(&mut commands, &mut seen, at, n.min(26), 50.0, 170.0, &spark, 3.0, 0.35, -60.0);
+                    // the hitter's own colour, if they have one
+                    let own = roster.0[sel.chars[1 - i]].spark_color.map(|c| tints(c));
+                    burst(&mut commands, &mut seen, at, n.min(26), 50.0, 170.0, own.as_ref().map_or(&spark[..], |c| &c[..]), 3.0, 0.35, -60.0);
                     spawn(&mut commands, at, Vec2::ZERO, Color::WHITE, 14.0, 0.09, 0.0, true);
                     shake.0 = shake.0.max((lost as f32 / 14.0).min(6.0));
                 }
@@ -213,6 +220,38 @@ pub fn emit(
             if f.state == FighterState::Ko && prev.state != FighterState::Ko {
                 burst(&mut commands, &mut seen, feet + Vec2::new(0.0, 30.0), 36, 60.0, 240.0, &spark, 3.0, 0.7, -120.0);
                 shake.0 = 8.0;
+            }
+            // launched by the spin: a burst of red energy under him and a column of it trailing up
+            let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
+            if f.state == FighterState::Attack && mv.launch > 0 && prev.y == 0 && f.y > 0 {
+                let red = tints(data.spark_color.unwrap_or((0.55, 0.05, 0.08)));
+                burst(&mut commands, &mut seen, feet + Vec2::new(0.0, 4.0), 30, 60.0, 200.0, &red, 3.0, 0.5, -80.0);
+                for k in 0..16 {
+                    let v = Vec2::new(seen.range(-20.0, 20.0), seen.range(-160.0, -40.0));
+                    spawn(&mut commands, feet + Vec2::new(seen.range(-8.0, 8.0), seen.range(0.0, 30.0)), v, red[k % 3], seen.range(2.0, 4.0), 0.45, 0.0, true);
+                }
+                // the blast: a red shockwave along the floor, out to its reach
+                let reach = mv.launch_radius.max(1) as f32;
+                for k in 0..14 {
+                    let dir = if k % 2 == 0 { 1.0 } else { -1.0 };
+                    spawn(&mut commands, feet + Vec2::new(0.0, 2.0 + (k / 2 % 3) as f32), Vec2::new(dir * reach * seen.range(2.2, 3.2), 0.0), red[k % 3], 3.0, 0.3, 0.0, true);
+                }
+                shake.0 = shake.0.max(6.0);
+            }
+            if f.state == FighterState::Attack && mv.launch > 0 && f.y > 0 && f.vy > 0 && s.frame % 2 == 0 {
+                let red = tints(data.spark_color.unwrap_or((0.55, 0.05, 0.08)));
+                for k in 0..3 {
+                    spawn(&mut commands, feet + Vec2::new(seen.range(-6.0, 6.0), seen.range(-4.0, 6.0)), Vec2::new(0.0, -seen.range(30.0, 80.0)), red[k], seen.range(2.0, 3.0), 0.35, 0.0, true);
+                }
+            }
+            // the scythe spin leaves dark red embers round him
+            if f.state == FighterState::Attack && mv.anim == AnimKind::Reap && f.y == 0 && mv.is_active(f.state_frame) {
+                let red = tints(data.spark_color.unwrap_or((0.55, 0.05, 0.08)));
+                for k in 0..3 {
+                    let a = seen.range(0.0, std::f32::consts::TAU);
+                    let p = feet + Vec2::new(a.cos() * 34.0, 26.0 + a.sin() * 12.0);
+                    spawn(&mut commands, p, Vec2::new(-a.sin() * 90.0, a.cos() * 30.0), red[k], 2.0, 0.3, 0.0, true);
+                }
             }
             // dust from jumping, landing and walking
             if prev.y == 0 && f.y > 0 {
@@ -270,7 +309,7 @@ pub fn emit(
                     &mut commands,
                     at + Vec2::new(-(f.facing as f32) * seen.range(0.0, 14.0), jitter),
                     Vec2::new(-(f.facing as f32) * 40.0, 0.0),
-                    Color::srgba(1.0, 1.0, 1.0, 0.9),
+                    data.spark_color.map_or(Color::srgba(1.0, 1.0, 1.0, 0.9), |(r, g, b)| Color::srgba(r, g, b, 0.9)),
                     2.0,
                     0.14,
                     0.0,

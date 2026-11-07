@@ -166,8 +166,10 @@ pub struct Fighter {
     /// the game state deals the splash.
     pub slamming: bool,
     pub slam_landed: bool,
-    /// What the landing of the plunge in progress deals (a floor smash sets its own).
+    /// What the landing of the plunge in progress deals (a floor smash sets its own), and how far it reaches each
+    /// side, in pixels (a launch blast sets its own).
     pub slam_damage: i32,
+    pub slam_radius: i32,
     /// Futility: frames left in which every attack this fighter starts costs them `FUTILITY_DAMAGE`.
     pub futile: u32,
     /// Throws in the current burst (`burst_shots`), and the frames since the last one.
@@ -305,6 +307,7 @@ impl Fighter {
             slamming: false,
             slam_landed: false,
             slam_damage: Self::SLAM_DAMAGE,
+            slam_radius: Self::SLAM_RADIUS,
             futile: 0,
             plot_armour: 0,
             covered: false,
@@ -682,6 +685,22 @@ impl Fighter {
                     self.vx = self.facing * mv.leap_vx;
                     self.air_used = true;
                 }
+                // a melee special spends the meter as it strikes (shots, summons and the rest spend it when they come out)
+                if mv.button == Button::Special && mv.hitbox.w > 0 && self.state_frame == mv.startup + 1 {
+                    self.meter = 0;
+                }
+                // a spin that ends by launching him into the air
+                if mv.launch > 0 && self.state_frame == mv.startup + (mv.hits.max(1) - 1) * mv.hit_gap + mv.active && self.grounded() {
+                    self.vy = mv.launch;
+                    self.vx = 0;
+                    self.air_used = true;
+                    // the energy that launches him blasts everyone close (dealt like a ground pound's splash)
+                    if mv.launch_damage > 0 {
+                        self.slam_landed = true;
+                        self.slam_damage = mv.launch_damage;
+                        self.slam_radius = mv.launch_radius;
+                    }
+                }
                 // each further hit window of a multi-hit move can hit again
                 // (a portal's bite only comes if its grab held)
                 if mv.hits > 1 && (1..mv.hits).any(|k| self.state_frame == mv.startup + k * mv.hit_gap + 1) {
@@ -725,9 +744,12 @@ impl Fighter {
                     return self.finish_step();
                 }
                 // a connected heavy or special can cancel into Light at once, and the next three lights are quick
-                if data.light_after_heavy && self.hit_done && mv.button != Button::Light {
-                    self.quick = 3;
-                    self.quick_timer = Self::QUICK_WINDOW;
+                // (a move with `light_cancel` only gets the cancel)
+                if (data.light_after_heavy || mv.light_cancel) && self.hit_done && mv.button != Button::Light {
+                    if data.light_after_heavy {
+                        self.quick = 3;
+                        self.quick_timer = Self::QUICK_WINDOW;
+                    }
                     if pressed.has(Input::LIGHT) && !self.lights_blocked() {
                         let air = !self.grounded();
                         if let Some(index) = data.find_move(Button::Light, input.has(Input::DOWN) && !air, air) {

@@ -669,7 +669,7 @@ impl GameState {
             let slam_damage = std::mem::replace(&mut self.fighters[a].slam_damage, Fighter::SLAM_DAMAGE);
             let d = self.targets[a];
             let ax = self.fighters[a].x;
-            let radius = Fighter::SLAM_RADIUS * PX;
+            let radius = std::mem::replace(&mut self.fighters[a].slam_radius, Fighter::SLAM_RADIUS) * PX;
             let foe = &self.fighters[d];
             if (foe.x - ax).abs() <= radius && foe.y <= 30 * PX && foe.state != FighterState::Ko && !foe.invulnerable() {
                 let dir = if foe.x >= ax { 1 } else { -1 };
@@ -1872,6 +1872,61 @@ mod tests {
         }
         assert_eq!(s.fighters[0].y, 0);
         assert_eq!(s.fighters[0].state, FighterState::Idle);
+    }
+
+    #[test]
+    fn the_haymakers_hook_cancels_into_light_once_it_lands() {
+        let h = CharacterData::from_ron(&std::fs::read_to_string("assets/characters/haymaker.ron").unwrap()).unwrap();
+        let mut s = GameState::new();
+        s.fighters[0].x = 0;
+        s.fighters[1].x = 70 * PX;
+        s.step([Input(Input::HEAVY), Input::default()], [&h, &h]);
+        let hook = s.fighters[0].attack;
+        assert_eq!(h.moves[hook].name, "Reaper's Hook");
+        for _ in 0..60 {
+            if s.fighters[0].hit_done {
+                break;
+            }
+            s.step([Input::default(); 2], [&h, &h]);
+        }
+        assert!(s.fighters[0].hit_done, "the hook landed");
+        // (one free frame so the press is new)
+        s.step([Input::default(); 2], [&h, &h]);
+        // pressed during the hit's freeze, it comes out the moment the freeze ends
+        s.step([Input(Input::LIGHT), Input::default()], [&h, &h]);
+        while s.fighters[0].hitstop > 0 {
+            s.step([Input::default(); 2], [&h, &h]);
+        }
+        s.step([Input::default(); 2], [&h, &h]);
+        let f = &s.fighters[0];
+        assert_eq!(h.moves[f.attack].button, Button::Light, "a light at once ({:?} frame {} hitstop {} light_lock {})", f.state, f.state_frame, f.hitstop, f.light_lock);
+    }
+
+    #[test]
+    fn the_haymakers_spin_launches_him_with_a_blast_that_hurts_anyone_close() {
+        let h = CharacterData::from_ron(&std::fs::read_to_string("assets/characters/haymaker.ron").unwrap()).unwrap();
+        let spin = h.moves.iter().find(|m| m.launch > 0).expect("the spin");
+        let mut s = GameState::new();
+        s.fighters[0].x = 0;
+        // close enough for the blade and the blast
+        s.fighters[1].x = 62 * PX;
+        s.fighters[0].meter = Fighter::METER_MAX;
+        s.step([Input(Input::SPECIAL), Input::default()], [&h, &h]);
+        let launch_at = spin.startup + (spin.hits - 1) * spin.hit_gap + spin.active;
+        let mut before = s.fighters[1].health;
+        let mut blast = None;
+        // (hit pauses on each turn delay it)
+        for _ in 0..launch_at + 40 {
+            before = s.fighters[1].health;
+            s.step([Input::default(); 2], [&h, &h]);
+            if s.fighters[0].y > 0 {
+                blast = Some(before - s.fighters[1].health);
+                break;
+            }
+        }
+        assert_eq!(blast, Some(spin.launch_damage), "launched, and the blast hit for its damage (health before: {before}, gap {} px, foe {:?})", (s.fighters[1].x - s.fighters[0].x) / PX, s.fighters[1].state);
+        assert_eq!(s.fighters[0].slam_radius, Fighter::SLAM_RADIUS, "the next ground pound has its usual reach");
+        assert_eq!(s.fighters[0].meter, 0, "the special spent the meter");
     }
 
     #[test]
@@ -3688,7 +3743,7 @@ mod tests {
     }
 
     #[test]
-    fn anaran_reads_while_the_button_is_held_and_fires_a_missile_every_second() {
+    fn anaran_reads_while_the_button_is_held_and_keeps_firing_missiles() {
         let mut s = GameState::new();
         s.fighters[0].x = -100 * PX;
         s.fighters[1].x = 150 * PX;
@@ -3696,7 +3751,7 @@ mod tests {
         // Holding Light (and walking away) he keeps reading and keeps walking.
         let mut missiles_at = Vec::new();
         let mut last = 0;
-        for frame in 0..320 {
+        for frame in 0..260 {
             astep(&mut s, Input::LIGHT | Input::LEFT, 0);
             if s.fighters[0].shots > last {
                 last = s.fighters[0].shots;
@@ -3705,9 +3760,9 @@ mod tests {
             assert_eq!(s.fighters[0].state, FighterState::Attack, "still reading at frame {frame}");
         }
         assert!(s.fighters[0].x < start, "he walks while he reads");
-        assert_eq!(missiles_at.len(), 5, "five missiles in a bit over five seconds: {missiles_at:?}");
+        assert_eq!(missiles_at.len(), 5, "five missiles in a bit over four seconds: {missiles_at:?}");
         for pair in missiles_at.windows(2) {
-            assert_eq!(pair[1] - pair[0], 60, "one second apart: {missiles_at:?}");
+            assert_eq!(pair[1] - pair[0], 46, "46 frames apart: {missiles_at:?}");
         }
         // Letting go closes the scroll and stops the missiles.
         for _ in 0..40 {

@@ -1,0 +1,54 @@
+// The Haymaker: a scythe fighter. Medium range: his swings are slower than the other melee fighters' but reach further.
+// His sparks and energy are dark red. Drawings come from `python tools/gen_haymaker.py` (posed from tools/haymaker.png).
+//
+// Light: a scythe slash; crouching, a low sweep; in the air, a slash downwards. The third hit of a combo (the finisher)
+//        is a lunge: a short jump forward with the scythe held out, slashing as he lands on them.
+// Heavy: he thrusts the scythe out, hooks the opponent with the blade and drags them to him (damaging them). Once it
+//        connects, Light cancels it at once (`light_cancel`).
+// Special: he spins the scythe round himself three times, each turn a hit, then a burst of red energy launches him
+//        into the air (`launch`), blasting anyone close (`launch_damage`).
+// See ayz.ron for what each field means; launch, hits and pull_foe are explained in src/sim/data.rs.
+(
+    name: "Haymaker",
+    subtitle: Some("Reaps what you sow"),
+    sprites: Some("haymaker"),
+    blurbs: ["Long scythe slashes, then a lunge: a short jump at the enemy that slashes as he lands.", "Hooks the enemy with the blade and drags them to him. Light follows at once if it lands.", "Spins the scythe round him three times, then red energy launches him up and blasts anyone close."],
+    color: (0.62, 0.12, 0.14),
+    spark_color: Some((0.62, 0.06, 0.1)),
+    walk_speed: 190,
+    jump_speed: 1050,
+    // his slash reaches about 100 px centre to centre
+    cpu_range: Some(88),
+    // the light swings have in-between drawings (`punch_mid_*`): out, strike, back
+    punch_tweens: true,
+    moves: [
+        // two swings that alternate while it's spammed: an overhead hack, then a rising backhand
+        (name: "Scythe Slash", button: Light, crouching: false, anim: Punch, walk_pct: 40,
+         startup: 5, active: 4, recovery: 8, damage: 34, hitstun: 14, blockstun: 9, knockback: 2, hitstop: 4,
+         hitbox: (x: 12, y: 14, w: 90, h: 32), assist: 6),
+        (name: "Low Sweep", button: Light, crouching: true, anim: Soft, walk_pct: 0,
+         startup: 6, active: 4, recovery: 8, damage: 30, hitstun: 14, blockstun: 9, knockback: 2, hitstop: 4,
+         hitbox: (x: 12, y: 0, w: 92, h: 12)),
+        // finisher of a light combo; must come after the normal slash
+        (name: "Reaping Lunge", button: Light, crouching: false, anim: Kicks, walk_pct: 0, finisher_move: true,
+         leap: 560, leap_vx: 260,
+         startup: 5, active: 10, recovery: 10, damage: 46, hitstun: 18, blockstun: 10, knockback: 3, hitstop: 5,
+         hitbox: (x: 8, y: 0, w: 78, h: 40)),
+        (name: "Air Slash", button: Light, crouching: false, air: true, anim: Soft, walk_pct: 100,
+         startup: 5, active: 5, recovery: 8, damage: 30, hitstun: 14, blockstun: 8, knockback: 2, hitstop: 4,
+         hitbox: (x: 6, y: -14, w: 82, h: 48)),
+        (name: "Reaper's Hook", button: Heavy, crouching: false, anim: Hard, walk_pct: 0,
+         pull_foe: true, pull_gap: 30, cooldown: 150, guard_hits: Some(2), light_cancel: true,
+         startup: 7, active: 4, recovery: 20, damage: 55, hitstun: 26, blockstun: 12, knockback: 0, hitstop: 6,
+         hitbox: (x: 14, y: 18, w: 118, h: 20), assist: 10),
+        (name: "Air Hook", button: Heavy, crouching: false, air: true, anim: Hard, walk_pct: 100,
+         pull_foe: true, pull_gap: 30, cooldown: 150, guard_hits: Some(2), light_cancel: true,
+         startup: 6, active: 4, recovery: 15, damage: 45, hitstun: 24, blockstun: 12, knockback: 0, hitstop: 6,
+         hitbox: (x: 10, y: -14, w: 106, h: 44), assist: 10),
+        // three turns of the scythe (40 each), then the red launch, whose blast hits anyone close for 45
+        (name: "Reaping Spin", button: Special, crouching: false, anim: Reap, walk_pct: 0,
+         hits: 3, hit_gap: 11, launch: 1250, launch_damage: 45, launch_radius: 80, committed: true,
+         startup: 5, active: 6, recovery: 30, damage: 40, hitstun: 16, blockstun: 10, knockback: 0, hitstop: 4,
+         hitbox: (x: -62, y: 0, w: 124, h: 54)),
+    ],
+)

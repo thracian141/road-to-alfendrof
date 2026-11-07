@@ -76,6 +76,8 @@ pub enum Frame {
     Dunk(usize),
     /// Throwing an iced latte: the cup held back, the throw, the follow-through.
     Latte(usize),
+    /// The scythe spin: the wind-up, four drawings turning the scythe round him, the red launch, in the air, landing.
+    Reap(usize),
     /// Idle while he rolls a cigarette: the paper, the tobacco, the roll, a lick of the edge.
     Craft(usize),
     /// Between the alternating punches' drawings: right swinging out, right coming back, then the left.
@@ -123,6 +125,7 @@ impl Frame {
             Frame::Dunk(i) => format!("dunk_{i}"),
             Frame::Cover(i) => format!("cover_{i}"),
             Frame::Latte(i) => format!("latte_{i}"),
+            Frame::Reap(i) => format!("reap_{i}"),
             Frame::Craft(i) => format!("craft_{i}"),
         }
     }
@@ -183,6 +186,8 @@ pub const COVER_FRAMES: usize = 2;
 pub const CRAFT_FRAMES: usize = 4;
 /// Throwing an iced latte.
 pub const LATTE_FRAMES: usize = 3;
+/// The scythe spin and its launch.
+pub const REAP_FRAMES: usize = 8;
 
 /// Bat form drawings (one wingbeat).
 pub const BAT_FRAMES: usize = 4;
@@ -250,6 +255,9 @@ pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     }
     if data.air_shot_tilt {
         v.extend((0..LEAN_FRAMES).map(Frame::Lean));
+    }
+    if data.moves.iter().any(|m| m.anim == AnimKind::Reap) {
+        v.extend((0..REAP_FRAMES).map(Frame::Reap));
     }
     v
 }
@@ -647,6 +655,22 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
                 2
             } else {
                 3
+            })
+        }
+        AnimKind::Reap => {
+            // crouched with the scythe wound back, four drawings of it turning round him (one turn per hit), then the launch: rising
+            // in a burst of red, falling, and the landing
+            let spin_end = mv.startup + (mv.hits.max(1) - 1) * mv.hit_gap + mv.active;
+            Frame::Reap(if frame <= mv.startup {
+                0
+            } else if frame <= spin_end {
+                1 + ((frame - mv.startup) * 4 / mv.hit_gap.max(4)) as usize % 4
+            } else if f.grounded() {
+                7
+            } else if f.vy > 0 {
+                5
+            } else {
+                6
             })
         }
         AnimKind::Summon => Frame::Summon(if frame <= mv.startup {

@@ -1,6 +1,6 @@
 // Anaran, Arch-Historian: a pompous high elf in red and copper robes with a black cape and dark crimson hair. A ranged fighter.
 // Light: he opens a scroll and reads for as long as you hold the button (no combos). While he reads, a heat-seeking
-//        missile leaves the scroll after 0.75 seconds of reading and then one every second; it curves after the enemy and detonates
+//        missile leaves the scroll after 0.6 seconds of reading and then one every 0.75 seconds; it curves after the enemy and detonates
 //        when it is close. He can walk or crouch while he reads (on the ground only), and being hit stops it. If three of
 //        his missiles are blocked (without one getting through in between) he is stunned for 1.2 seconds.
 // Heavy: he slams his staff on the ground (a quick cast, a 3.5 second cooldown that shows as a bar under him, and the screen shakes): a magical shockwave around him (both sides) damages and shoves the enemy
@@ -29,7 +29,7 @@
             guard_break: Some("voice_anaran_stunned"), smash: Some("voice_anaran_stomp"), win: Some("voice_anaran_victory")),
     moves: [
         (name: "Read the Scroll", sfx: (cast: Some("paper"), launch: Some("arcane_launch"), hit: Some("arcane_hit"), sustain: Some("voice_anaran_fireball")), button: Light, crouching: false, anim: Read, walk_pct: 100,
-         channel: Some((first: 45, every: 60)), blocked_stun: Some((shots: 3, stun: 72)),
+         channel: Some((first: 35, every: 46)), blocked_stun: Some((shots: 3, stun: 72)),
          startup: 14, active: 1, recovery: 12, damage: 70, hitstun: 22, blockstun: 12, knockback: 4, hitstop: 6,
          hitbox: (x: 0, y: 0, w: 0, h: 0),
          projectile: Some((x: 18, y: 30, aim_y: 30, travel_frames: 1, lifetime: 300, size: (10, 10), image: Some("missile"), summon_image: Some("none"), homing: true, homing_turn: 7, detonate: 22, speed_tenths: 36))),

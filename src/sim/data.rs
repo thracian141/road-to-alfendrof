@@ -19,6 +19,9 @@ pub struct CharacterData {
     pub sprites: Option<String>,
     /// Placeholder body colour (r, g, b), 0..1.
     pub color: (f32, f32, f32),
+    /// The colour of this fighter's hit sparks and swing streaks (default: yellow sparks, white streaks).
+    #[serde(default)]
+    pub spark_color: Option<(f32, f32, f32)>,
     pub walk_speed: i32,
     pub jump_speed: i32,
     /// How close (pixels, centre to centre) the CPU gets before it attacks with this character
@@ -151,6 +154,8 @@ pub enum AnimKind {
     /// Crouching, arms up, leaping back into a portal, gone, lunging out behind the enemy, fangs bared, the bite,
     /// recovering (8 drawings).
     Portal,
+    /// The Haymaker's scythe spun round him, then the red launch into the air (8 drawings).
+    Reap,
 }
 
 /// A move whose shots, once `shots` of them have been blocked (without a hit in between, and not too long apart),
@@ -500,6 +505,18 @@ pub struct MoveData {
     pub leap: i32,
     #[serde(default)]
     pub leap_vx: i32,
+    /// Launched up at this speed (subpixels per frame) when the last hit window ends (the Haymaker's spin ends in a
+    /// burst of red energy). Landing ends the move.
+    #[serde(default)]
+    pub launch: i32,
+    /// Once it has connected, Light cancels it at once (the character-wide `light_after_heavy` without its quick lights).
+    #[serde(default)]
+    pub light_cancel: bool,
+    /// The launch's blast: damage to anyone on the ground within `launch_radius` pixels either side.
+    #[serde(default)]
+    pub launch_damage: i32,
+    #[serde(default)]
+    pub launch_radius: i32,
     /// A move that pulls him through the air ends in a floor smash: once the pull has brought him to the opponent he
     /// plunges to the floor, and the landing deals this much (the catch itself deals `damage`).
     #[serde(default)]

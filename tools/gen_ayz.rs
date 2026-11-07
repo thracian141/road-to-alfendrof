@@ -733,6 +733,8 @@ fn spec(frame: Frame) -> Spec {
     match frame {
         Frame::Idle(0) => s((Keep, Keep), 0.0, 0, stand(), 0),
         Frame::Idle(_) => s((Keep, Keep), 0.0, 1, stand(), 0),
+        // the Haymaker's scythe spin is drawn by tools/gen_haymaker.py, not here
+        Frame::Reap(_) => s((Keep, Keep), 0.0, 0, stand(), 0),
         // Walking: a six-beat stride. The body bobs and leans into it, the arms swing against the
         // legs, and the feet step far apart on the contact beats.
         Frame::Walk(0) => s((pose((9.0, 28.0), (14.0, 33.0)), pose((36.0, 29.0), (34.0, 35.0))), 2.0, 0, legs((7.0, 45.0), (3.0, 47.0), (33.0, 45.0), (37.0, 48.0)), 0),
