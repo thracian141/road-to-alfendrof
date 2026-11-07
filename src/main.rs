@@ -9,6 +9,7 @@ mod online;
 mod social;
 mod particles;
 mod render;
+mod footprints;
 mod outline;
 mod settings;
 mod sfx;
@@ -395,6 +396,7 @@ fn main() {
         .init_resource::<particles::Shake>()
         .init_resource::<briefing::ReadyPress>()
         .init_resource::<outline::Rings>()
+        .init_resource::<footprints::FootprintImage>()
         .add_plugins(settings::SettingsPlugin)
         .add_plugins(sfx::SfxPlugin)
         .add_plugins(menus::MenuPlugin)
@@ -440,7 +442,7 @@ fn main() {
         )
         .add_systems(Update, (briefing::press_ready, briefing::update).run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_scribe_effects.run_if(in_state(AppState::Fight)))
-        .add_systems(Update, (outline::animate_outline.after(render::animate_body), render::animate_away).run_if(in_state(AppState::Fight)))
+        .add_systems(Update, (outline::animate_outline.after(render::animate_body), render::animate_away, footprints::leave_footprints, footprints::fade_footprints).run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_whale.run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_shield.run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_portals.run_if(in_state(AppState::Fight)))
@@ -525,6 +527,8 @@ fn spawn_fight(
         f.meter = dev.meter;
     }
     let stage = &stages.0[selection.stage];
+    // snow (and the like) takes footprints
+    commands.insert_resource(footprints::FootprintImage(stage.footprints.as_ref().map(|path| asset_server.load(path.clone()))));
     clear.0 = rgb(stage.sky);
     let scoped = DespawnOnExit(AppState::Fight);
 

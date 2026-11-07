@@ -420,6 +420,8 @@ pub struct CharacterVoice {
     pub smash: Option<String>,
     /// Winning the match.
     pub win: Option<String>,
+    /// Losing a round on time (nobody knocked out); never for the last round, which only has the winner's sounds.
+    pub loss: Option<String>,
 }
 
 /// The sounds of a move: names of the groups in `assets/sfx` (`name.wav`, or `name_0.wav`, `name_1.wav`... to pick from).

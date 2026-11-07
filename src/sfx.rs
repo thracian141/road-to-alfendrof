@@ -302,6 +302,8 @@ fn play_fight_sounds(
     *started = counting;
     *round = s.round;
     let over = matches!(s.phase, Phase::RoundEnd(_) | Phase::MatchOver);
+    // the round that decides the match (or a surrender) has only the winner's sounds: no death or loss cries, no stinger
+    let deciding = s.wins.iter().any(|&w| w >= t2f::sim::GameState::ROUNDS_TO_WIN) || matches!(s.phase, Phase::MatchOver);
     let match_just_ended = matches!(s.phase, Phase::MatchOver) && !*match_over;
     // a character with a voice line of their own for winning gets that alone, without the generic jingle
     let own_win = winner.is_some_and(|w| roster.0[sel.chars[w]].voice.win.is_some());
@@ -309,8 +311,21 @@ fn play_fight_sounds(
         if !own_win {
             play!("match_win", false);
         }
-    } else if over && !*round_over && !matches!(s.phase, Phase::MatchOver) {
+    } else if over && !*round_over && !deciding {
         play!("round_end", false);
+        // a round lost on time (nobody knocked out) gets the loser's loss line
+        let lowest = s.fighters.iter().map(|f| f.health).min().unwrap_or(0);
+        let highest = s.fighters.iter().map(|f| f.health).max().unwrap_or(0);
+        if lowest > 0 && lowest < highest {
+            for i in 0..s.fighters.len() {
+                if s.fighters[i].health == lowest {
+                    voice.speaker = i;
+                    if let Some(name) = &roster.0[sel.chars[i]].voice.loss {
+                        play!(name, false);
+                    }
+                }
+            }
+        }
     }
     *round_over = over;
     *match_over = matches!(s.phase, Phase::MatchOver);
@@ -371,7 +386,7 @@ fn play_fight_sounds(
             let hurt = entered(FighterState::Hitstun) || entered(FighterState::Blockstun) || lost > 0;
             if entered(FighterState::Ko) {
                 play!("ko", false);
-                if let Some(name) = &own.ko {
+                if let Some(name) = own.ko.as_ref().filter(|_| !deciding) {
                     play!(name, false);
                 }
             } else if hurt {

@@ -17,6 +17,9 @@ pub struct StageData {
     /// Tile repeated along the floor (path under `assets/`) instead of the two colours.
     #[serde(default)]
     pub floor_tile: Option<String>,
+    /// A footprint picture (path under `assets/`): fighters leave dents like it in the floor as they walk and land (snow).
+    #[serde(default)]
+    pub footprints: Option<String>,
 }
 
 /// One background layer, centred on the stage (`y` raises it).
@@ -56,5 +59,16 @@ mod tests {
         let s = StageData::from_ron(include_str!("../assets/stages/galata.ron")).unwrap();
         assert_eq!(s.name, "Galata Tower");
         assert!(s.layers.iter().any(|l| l.glow), "the portal layer should glow");
+    }
+
+    #[test]
+    fn the_snow_stage_has_footprints_and_its_pictures_exist() {
+        let s = StageData::from_ron(include_str!("../assets/stages/oulu_city_council.ron")).unwrap();
+        assert_eq!(s.name, "Oulu City Council");
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for path in s.layers.iter().map(|l| &l.image).chain(s.floor_tile.iter()).chain(s.footprints.iter()) {
+            assert!(assets.join(path).exists(), "missing {path}");
+        }
+        assert!(s.footprints.is_some());
     }
 }

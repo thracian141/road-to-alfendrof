@@ -1,0 +1,15 @@
+// Oulu City Council: a snowfield under the mountains, with an igloo and some company. The picture is reduced to 640 px
+// and 96 colours; the snow floor and the footprint come from `python tools/gen_oulu.py [picture]` (Pillow).
+// The floor is snow: every step a fighter takes, and every landing, leaves a dent in it (`footprints`).
+(
+    name: "Oulu City Council",
+    sky: (0.74, 0.80, 0.90),
+    pillar: (0.78, 0.84, 0.92),
+    floor_a: (0.87, 0.91, 0.96),
+    floor_b: (0.82, 0.87, 0.94),
+    layers: [
+        (image: "backgrounds/oulu/near.png", parallax: 0.0, z: -8.0, y: 145.0, fit_view: true),
+    ],
+    floor_tile: Some("backgrounds/oulu/floor.png"),
+    footprints: Some("backgrounds/oulu/footprint.png"),
+)

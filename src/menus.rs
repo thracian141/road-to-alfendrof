@@ -600,11 +600,9 @@ fn pick_title(player: usize, mode: Mode) -> String {
 
 fn spawn_stage_select(mut commands: Commands, mut menu: ResMut<Menu>, stages: Res<Stages>, asset_server: Res<AssetServer>) {
     spawn_backdrop(&mut commands, AppState::StageSelect, &asset_server);
-    let items = stages
-        .0
-        .iter()
-        .map(|s| Item::new(s.name.clone(), Color::srgb(s.floor_a.0 + 0.3, s.floor_a.1 + 0.3, s.floor_a.2 + 0.3)))
-        .collect();
+    // "Select Random" is first, so it is what Enter picks; the stages are below it, to scroll to
+    let mut items = vec![Item::new("Select Random", Color::srgb(1.0, 0.9, 0.4))];
+    items.extend(stages.0.iter().map(|s| Item::new(s.name.clone(), Color::srgb(s.floor_a.0 + 0.3, s.floor_a.1 + 0.3, s.floor_a.2 + 0.3))));
     spawn_menu(
         &mut commands,
         &mut menu,
@@ -819,11 +817,22 @@ fn char_confirm(
     }
 }
 
-fn stage_confirm(keys: Res<crate::MenuInput>, menu: Res<Menu>, mut sel: ResMut<Selection>, mut next: ResMut<NextState<AppState>>) {
+/// A stage picked by chance (the clock's nanoseconds, scrambled: it only has to differ from fight to fight).
+fn random_stage(count: usize) -> usize {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
+    let mixed = nanos.wrapping_mul(2_654_435_761) ^ (nanos >> 7);
+    (mixed >> 8) as usize % count.max(1)
+}
+
+fn stage_confirm(keys: Res<crate::MenuInput>, menu: Res<Menu>, stages: Res<Stages>, mut sel: ResMut<Selection>, mut next: ResMut<NextState<AppState>>) {
     if back_pressed(&keys.0) {
         next.set(AppState::CharSelect);
     } else if confirm_pressed(&keys.0) {
-        sel.stage = menu.cursor;
+        // the first entry is Select Random; the stages follow it
+        sel.stage = match menu.cursor {
+            0 => random_stage(stages.0.len()),
+            n => n - 1,
+        };
         next.set(AppState::Fight);
     }
 }
