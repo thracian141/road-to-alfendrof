@@ -1033,9 +1033,10 @@ impl GameState {
         d.hitstop = mv.hitstop;
         let push = dir * mv.knockback * PX;
         let damage = mv.damage * power / 100 / if weakened { 2 } else { 1 };
-        // a guard holds against lights for good; heavier moves break it after so many hits
+        // a guard holds against lights for good; heavier moves break it after so many hits (some count the hits that
+        // got through as well)
         let mut blocked = blocked;
-        if blocked && mv.guard_need() > 0 {
+        if (blocked || mv.hits_break_guard) && mv.guard_need() > 0 {
             d.shield_hits += 1;
             d.shield_timer = 40;
             if d.shield_hits >= mv.guard_need() {
@@ -1116,7 +1117,8 @@ impl GameState {
             if p.aim_ground && !p.lob && p.spread > 0 {
                 let moving = target.vx != 0;
                 let range = if moving { p.spread } else { p.spread / 3 };
-                aim_x += target.vx * frames * 6 / 10;
+                // leads a running target all the way to where it will be
+                aim_x += target.vx * frames;
                 aim_x += ((f.shots as i32 * 37 + 11) % (2 * range + 1) - range) * PX;
             }
             let (mut vx, mut vy) = ((if p.lob { land_x } else { aim_x } - x) / frames, (if p.lob { 0 } else if p.aim_ground { 0 } else { target.y + p.aim_y * PX } - y) / frames);
@@ -2213,7 +2215,7 @@ mod tests {
         }
         assert!(apex >= 150 * PX, "{} px", apex / PX);
         assert!(fall_speed <= 600, "he floats down, fastest fall {fall_speed} subpixels a frame");
-        assert_eq!(impacts, 3, "each of the three bullets lands on the floor");
+        assert_eq!(impacts, 4, "each of the four bullets lands on the floor");
     }
 
     #[test]
@@ -2442,6 +2444,24 @@ mod tests {
         step(&mut s, 0, Input::BLOCK);
         step(&mut s, 0, Input::BLOCK);
         assert_eq!(s.fighters[1].state, FighterState::Guard);
+    }
+
+    #[test]
+    fn any_two_gun_boost_bullets_break_the_guard_blocked_or_not() {
+        let c = cowboy();
+        let boost = c.moves.iter().find(|m| m.name == "Gun Boost").expect("the cowboy's heavy");
+        let shot = boost.as_shot();
+        // one gets through, the next is blocked: the guard breaks
+        let mut s = close_up();
+        assert!(!s.apply_hit(1, &shot, 1, false, 100));
+        assert_eq!(s.fighters[1].block_disabled, 0, "one bullet is not enough");
+        let blocked = s.apply_hit(1, &shot, 1, true, 100);
+        assert!(!blocked && s.fighters[1].block_disabled > 0, "the second breaks the guard");
+        // two that both get through break it too
+        let mut s = close_up();
+        s.apply_hit(1, &shot, 1, false, 100);
+        s.apply_hit(1, &shot, 1, false, 100);
+        assert!(s.fighters[1].block_disabled > 0);
     }
 
     #[test]

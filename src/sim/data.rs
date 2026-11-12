@@ -494,6 +494,10 @@ pub struct MoveData {
     /// A volley's shots add up.
     #[serde(default)]
     pub guard_hits: Option<u32>,
+    /// Hits that get through count towards breaking the guard as well as blocked ones: so many of its hits land, blocked
+    /// or not, and the guard is broken.
+    #[serde(default)]
+    pub hits_break_guard: bool,
     /// Steps in during the startup and the active frames at this forward speed (subpixels per frame), instead of
     /// walking (a negative one steps back).
     #[serde(default)]

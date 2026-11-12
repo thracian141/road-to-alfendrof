@@ -3,8 +3,9 @@
 // Light: the Gunslinger's lights (a finger-gun shot, a low slap, an aimed shot in the air). The combo is two shots and
 //        then a lasso that pulls the opponent in a little and stuns them. His shots reach about 300 px (50 frames at 6 px).
 // Heavy: he fires both finger guns at the ground (the splash hurts anyone close), the recoil launches him up, and at the
-//        top (three times as high as before, then he floats down slowly) he shoots three bullets (half as strong as the
-//        Gunslinger's) at the floor where the enemy stands, never at the enemy's body, so the enemy can jump them. He can
+//        top (three times as high as before, then he floats down slowly) he shoots four quick bullets (half as strong as the
+//        Gunslinger's) at the floor where the enemy will be, never at the body, so the enemy can still jump them; any two
+//        that land, blocked or not, break the guard. He can
 //        use it while being hit to get out of a combo, but not out of a long stun (40 frames or more) or a hold.
 // Special: he throws his hat. It sits on his head the whole fight and glows once the meter is full. It is gone while
 //        the throw itself recharges. Where it lands it puts the curse on the opponent: a glowing blue ring split into a
@@ -58,12 +59,12 @@
          projectile: Some((x: 26, y: 26, aim_y: 28, travel_frames: 12, lifetime: 40, size: (10, 6), image: Some("bullet"), aimed: true))),
         // both guns at the ground (the splash), up he goes, then the volley at the enemy; needs the ground
         (name: "Gun Boost", sfx: (cast: Some("shot_shotgun"), launch: Some("shot_pistol"), voice: Some("voice_cowboy_heavy_jump"), launch_voice: Some("voice_cowboy_heavy_shoot")), button: Heavy, crouching: false, anim: Boost, walk_pct: 0,
-         leap: 1296, leap_vx: 40, slow_fall: 20, escape: true, radial: true, guard_hits: Some(2), cooldown: 150,
+         leap: 1296, leap_vx: 40, slow_fall: 20, escape: true, radial: true, guard_hits: Some(2), hits_break_guard: true, cooldown: 200,
          committed: true, commit_at: Some(3),
-         volley: 4, volley_gap: 8, volley_delay: 24, shot_damage: Some(11),
+         volley: 4, volley_gap: 6, volley_delay: 24, shot_damage: Some(11),
          startup: 14, active: 5, recovery: 55, damage: 44, hitstun: 22, blockstun: 12, knockback: 5, hitstop: 7,
          hitbox: (x: -48, y: 0, w: 96, h: 30),
-         projectile: Some((x: 30, y: 30, aim_y: 30, travel_frames: 10, lifetime: 45, size: (10, 6), image: Some("bullet"), aimed: true, aim_ground: true, spread: 48))),
+         projectile: Some((x: 30, y: 30, aim_y: 30, travel_frames: 8, lifetime: 45, size: (16, 10), image: Some("bullet"), aimed: true, aim_ground: true, spread: 40))),
         // the hat: it flies at the enemy and the curse starts where it lands (the damage comes when the ring closes)
         (name: "Hell's Hat", sfx: (cast: Some("fire_cast"), launch: Some("fire_burst"), hit: Some("fire_hit"), voice: Some("voice_cowboy_ult")), button: Special, crouching: false, anim: Summon, walk_pct: 0, cooldown: 420,
          curse: Some((duration: 420, squeeze: 24)),
