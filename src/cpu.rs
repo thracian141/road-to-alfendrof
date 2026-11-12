@@ -284,6 +284,14 @@ fn choose_input(state: &GameState, me: usize, data: &CharacterData, opp: &Charac
         return Input(toward | hop);
     }
 
+    // a long-reach fighter keeps the enemy at the tip of his weapon: too close, he steps back (or swings as he does)
+    if data.cpu_spacing && dist < range - 30 && m.meter < Fighter::METER_MAX {
+        return match roll {
+            0..=54 => Input(away),
+            55..=74 => button(Input::LIGHT),
+            _ => Input(away | Input::UP),
+        };
+    }
     // in range: attack, retreat or wait; with the special ready, use it often
     if m.meter >= crate::sim::Fighter::METER_MAX && roll < 45 {
         return button(Input::SPECIAL);

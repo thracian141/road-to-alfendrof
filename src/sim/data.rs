@@ -48,6 +48,9 @@ pub struct CharacterData {
     /// The CPU plays this one as a zoner: it backs away to keep its distance and shoots.
     #[serde(default)]
     pub keeps_distance: bool,
+    /// The CPU plays this one at the edge of its reach: close enough to hit, backing off when the enemy comes closer.
+    #[serde(default)]
+    pub cpu_spacing: bool,
     /// What Light, Heavy and Special do, in that order, for the character select.
     #[serde(default)]
     pub blurbs: Vec<String>,

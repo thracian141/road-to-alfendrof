@@ -303,6 +303,17 @@ pub fn emit(
         if let Some(b) = s.hitbox(i, data) {
             let front = if f.facing > 0 { b[2] } else { b[0] };
             let at = Vec2::new((front / PX) as f32, GROUND_Y + ((b[1] + b[3]) / 2 / PX) as f32);
+            // a long weapon cuts the air at the very end of its reach: pale wisps there as the swing starts
+            let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
+            if data.cpu_spacing && f.state_frame == mv.startup + 1 {
+                let air = [Color::srgba(0.92, 0.94, 1.0, 0.55), Color::srgba(0.8, 0.84, 0.95, 0.4)];
+                let half = ((b[3] - b[1]) / 2 / PX) as f32;
+                for k in 0..7 {
+                    let from = at + Vec2::new(seen.range(-2.0, 2.0), seen.range(-half, half));
+                    let v = Vec2::new(f.facing as f32 * seen.range(20.0, 50.0), seen.range(-12.0, 12.0));
+                    puff(&mut commands, &smoke, from, v, air[k % 2], seen.range(3.0, 6.0), seen.range(0.25, 0.4));
+                }
+            }
             for _ in 0..2 {
                 let jitter = seen.range(-6.0, 6.0);
                 spawn(
