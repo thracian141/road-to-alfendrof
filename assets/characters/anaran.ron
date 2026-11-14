@@ -1,5 +1,7 @@
 // Anaran, Arch-Historian: a pompous high elf in red and copper robes with a black cape and dark crimson hair. A ranged fighter.
-// Light: he opens a scroll and reads for as long as you hold the button (no combos). While he reads, a heat-seeking
+// Light: he opens a scroll and reads for as long as you hold the button (no combos). Each time he opens it he reads one of six
+//        spells (the golden fireball, or the black sun, blood, lightning, fire or water), never the same one twice in a row;
+//        his chant of it plays while he reads. While he reads, a heat-seeking
 //        missile leaves the scroll after 0.6 seconds of reading and then one every 0.75 seconds; it curves after the enemy and detonates
 //        when it is close. He can walk or crouch while he reads (on the ground only), and being hit stops it. If three of
 //        his missiles are blocked (without one getting through in between) he is stunned for 1.2 seconds.
@@ -14,7 +16,7 @@
     // shown under his name in the character select only
     subtitle: Some("Arch-Historian"),
     // what Light, Heavy and Special do, shown in the character select
-    blurbs: ["Hold to read the scroll: heat-seeking missiles fly at the enemy. Three blocked ones stun him.", "Staff slam: a shockwave all round him that shoves the enemy back, stops their attacks and breaks shots.", "Calls four goblins that swarm the enemy and bite until they are killed or time out."],
+    blurbs: ["Hold to read the scroll: heat-seeking missiles fly at the enemy, a different spell each time (sun, blood, lightning, fire, water). Three blocked ones stun him.", "Staff slam: a shockwave all round him that shoves the enemy back, stops their attacks and breaks shots.", "Calls four goblins that swarm the enemy and bite until they are killed or time out."],
     sprites: Some("anaran"),
     color: (0.95, 0.52, 0.38),
     walk_speed: 195,
@@ -28,7 +30,18 @@
     voice: (dash: Some("voice_anaran_dash"), hurt: Some("voice_anaran_hurt"), ko: Some("voice_anaran_death"), block: Some("voice_anaran_block"),
             guard_break: Some("voice_anaran_stunned"), smash: Some("voice_anaran_stomp"), win: Some("voice_anaran_victory")),
     moves: [
-        (name: "Read the Scroll", sfx: (cast: Some("paper"), launch: Some("arcane_launch"), hit: Some("arcane_hit"), sustain: Some("voice_anaran_fireball")), button: Light, crouching: false, anim: Read, walk_pct: 100,
+        (name: "Read the Scroll",
+         // each time he opens the scroll he reads one of these, or the golden fireball (his own form): its chant plays
+         // while he reads and every missile that leaves the scroll is that spell. Never the same twice in a row.
+         // The pictures come from `python tools/gen_anaran_spells.py`, the chants from tools/sound_sources/anaran_spells.
+         spells: [
+             (image: "spell_sun", drawings: 6, chant: "voice_anaran_spell_sun", trail: [(1.0, 0.82, 0.2), (1.0, 0.55, 0.1), (0.4, 0.15, 0.55)], motion: Rays),
+             (image: "spell_blood", drawings: 6, chant: "voice_anaran_spell_blood", trail: [(0.8, 0.05, 0.1), (0.5, 0.0, 0.05), (1.0, 0.3, 0.35)], motion: Drops),
+             (image: "spell_electric", drawings: 6, chant: "voice_anaran_spell_electric", trail: [(1.0, 1.0, 0.85), (0.45, 0.85, 1.0), (1.0, 0.95, 0.3)], motion: Arcs),
+             (image: "spell_fire", drawings: 6, chant: "voice_anaran_spell_fire", trail: [(1.0, 0.85, 0.25), (1.0, 0.45, 0.1), (0.85, 0.15, 0.05)], motion: Embers),
+             (image: "spell_water", drawings: 6, chant: "voice_anaran_spell_water", trail: [(0.45, 0.75, 1.0), (0.75, 0.92, 1.0), (0.2, 0.5, 0.9)], motion: Bubbles),
+         ],
+         sfx: (cast: Some("paper"), launch: Some("arcane_launch"), hit: Some("arcane_hit"), sustain: Some("voice_anaran_fireball")), button: Light, crouching: false, anim: Read, walk_pct: 100,
          channel: Some((first: 35, every: 46)), blocked_stun: Some((shots: 3, stun: 72)),
          startup: 14, active: 1, recovery: 12, damage: 70, hitstun: 22, blockstun: 12, knockback: 4, hitstop: 6,
          hitbox: (x: 0, y: 0, w: 0, h: 0),

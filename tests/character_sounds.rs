@@ -38,6 +38,32 @@ fn every_character_parses_and_its_sounds_exist() {
     assert!(checked > 20, "only {checked} sound names found");
 }
 
+/// A move's spells (Anaran's light): every chant is a sound, and every picture of every drawing is on disk.
+#[test]
+fn every_spell_has_its_chant_and_its_pictures() {
+    let mut checked = 0;
+    for entry in std::fs::read_dir(assets().join("characters")).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "ron") {
+            continue;
+        }
+        let data = CharacterData::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
+        for mv in &data.moves {
+            for spell in &mv.spells {
+                assert!(sound_exists(&spell.chant), "{}: spell {:?} has no chant {:?}", path.display(), spell.image, spell.chant);
+                assert!(spell.drawings > 0, "{}: spell {:?} has no drawings", path.display(), spell.image);
+                for i in 0..spell.drawings {
+                    let picture = assets().join("sprites").join(&folder).join(format!("{}_{i}.png", spell.image));
+                    assert!(picture.exists(), "missing {}", picture.display());
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 5, "only {checked} spells found");
+}
+
 #[test]
 fn the_generic_sounds_exist() {
     for name in [

@@ -432,6 +432,42 @@ pub struct CharacterVoice {
     pub loss: Option<String>,
 }
 
+/// One alternate form of a move's projectile (Anaran's spells). When the move starts it picks a form: the move's own,
+/// or one of these, never the one it picked last time. Every shot of that cast is the form, and its chant plays while
+/// the move is held.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpellData {
+    /// The drawings of its projectile (`<image>_0.png`, `<image>_1.png`... in the sprite folder) and how many there are.
+    pub image: String,
+    #[serde(default)]
+    pub drawings: usize,
+    /// The chant (a sound group in `assets/sfx`) that plays, looping, for as long as the move is held.
+    pub chant: String,
+    /// What the projectile throws off in flight: its colours, and how they move.
+    #[serde(default)]
+    pub trail: Vec<(f32, f32, f32)>,
+    #[serde(default)]
+    pub motion: SpellMotion,
+}
+
+/// How the particles a spell throws off move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum SpellMotion {
+    /// Scatter a little.
+    #[default]
+    Sparks,
+    /// Rise, like embers from a fire.
+    Embers,
+    /// Fall, like drops.
+    Drops,
+    /// Fly straight out from the spell, like rays.
+    Rays,
+    /// Jitter about, like arcs of lightning.
+    Arcs,
+    /// Drift slowly up, like bubbles.
+    Bubbles,
+}
+
 /// The sounds of a move: names of the groups in `assets/sfx` (`name.wav`, or `name_0.wav`, `name_1.wav`... to pick from).
 /// What is left out falls back to a generic sound for the move's button, so a move works without any.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -658,6 +694,9 @@ pub struct MoveData {
     /// A swing (not a shot: that is `ProjectileData::unblockable`) that guarding doesn't stop; it has to be dodged.
     #[serde(default)]
     pub unblockable: bool,
+    /// Alternate forms of this move's projectile (see `SpellData`): each time it starts it reads one of them, or its own.
+    #[serde(default)]
+    pub spells: Vec<SpellData>,
     /// Its cooldown is shared with the character's other moves of this button that say so too: using one puts them
     /// all on cooldown (a heavy that is a different move close up and far away).
     #[serde(default)]

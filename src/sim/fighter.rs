@@ -134,6 +134,10 @@ pub struct Fighter {
     /// Shots of this fighter's that were blocked in a row, and the frames left before that count is forgotten.
     pub shots_blocked: u8,
     pub shots_blocked_timer: u32,
+    /// The form of the spell being read (0: the move's own, then its `spells` one after the other).
+    pub spell: u8,
+    /// What the next form is picked from.
+    pub spell_seed: u32,
     /// Which way the drawing faces: the opponent, except a bat (or a bat roll) faces where it is flying.
     pub heading: i32,
     /// This fighter's roll is a bat too.
@@ -330,6 +334,8 @@ impl Fighter {
             lighter_mode: false,
             shots_blocked: 0,
             shots_blocked_timer: 0,
+            spell: 0,
+            spell_seed: 0,
             heading: facing,
             bat_roll: false,
             held: false,
@@ -469,6 +475,12 @@ impl Fighter {
     }
 
     fn begin_attack(&mut self, index: usize, mv: &MoveData) {
+        // a move with spells reads one: a form other than the one it read last time
+        if !mv.spells.is_empty() {
+            self.spell_seed = self.spell_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let forms = mv.spells.len() as u32 + 1;
+            self.spell = ((self.spell as u32 + 1 + (self.spell_seed >> 16) % (forms - 1)) % forms) as u8;
+        }
         self.cigs_used = self.cigs_used.saturating_add(mv.cig_cost as u8);
         if mv.last_cig {
             self.lighter_mode = true;

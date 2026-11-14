@@ -706,10 +706,18 @@ fn spawn_fight(
         }
         // and how many drawings each has, when a shot says (0 for the usual)
         let shots: Vec<_> = c.moves.iter().filter_map(|m| m.projectile.as_ref()).collect();
+        // (a move's spells have pictures of their own)
+        let mut effects = effects;
+        for spell in c.moves.iter().flat_map(|m| m.spells.iter()) {
+            if !effects.iter().any(|e| *e == spell.image) {
+                effects.push(spell.image.clone());
+            }
+        }
         let effects: Vec<(String, usize)> = effects
             .into_iter()
             .map(|e| {
                 let n = shots.iter().find(|p| p.image_name() == e && p.drawings > 0).map_or(0, |p| p.drawings);
+                let n = if n > 0 { n } else { c.moves.iter().flat_map(|m| m.spells.iter()).find(|s| s.image == e).map_or(0, |s| s.drawings) };
                 (e, n)
             })
             .collect();

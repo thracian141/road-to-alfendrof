@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 use t2f::anim::{frame_for, Frame, CENTRE_X, FULL_H};
-use t2f::sim::{AnimKind, Fighter, FighterState, PX};
+use t2f::sim::{AnimKind, Fighter, FighterState, SpellData, SpellMotion, PX};
 
 use crate::{AppState, Roster, Selection, Sim, GROUND_Y};
 
@@ -130,6 +130,57 @@ fn burst(commands: &mut Commands, seen: &mut Seen, at: Vec2, n: usize, lo: f32, 
         let color = colors[k % colors.len()];
         let s = size * seen.range(0.7, 1.4);
         spawn(commands, at, Vec2::new(angle.cos(), angle.sin()) * speed, color, s.round().max(1.0), life * seen.range(0.7, 1.2), gravity, true);
+    }
+}
+
+/// What a spell's fireball throws off in flight: its colours, moving the way its `SpellMotion` says. `dir` is the way
+/// the fireball is flying (1 right, -1 left).
+fn spell_trail(commands: &mut Commands, seen: &mut Seen, at: Vec2, spell: &SpellData, frame: u32, dir: f32) {
+    if frame % 2 != 0 || spell.trail.is_empty() {
+        return;
+    }
+    let pick = |seen: &mut Seen| {
+        let (r, g, b) = spell.trail[(seen.rand() * spell.trail.len() as f32) as usize % spell.trail.len()];
+        Color::srgb(r, g, b)
+    };
+    let around = |seen: &mut Seen, r: f32| at + Vec2::new(seen.range(-r, r), seen.range(-r, r));
+    match spell.motion {
+        SpellMotion::Sparks => {
+            let (c, p) = (pick(seen), around(seen, 3.0));
+            spawn(commands, p, Vec2::new(seen.range(-12.0, 12.0), seen.range(-8.0, 12.0)), c, 2.0, 0.3, 0.0, true);
+        }
+        // embers lift off and trail behind
+        SpellMotion::Embers => {
+            for _ in 0..2 {
+                let (c, p) = (pick(seen), around(seen, 3.0));
+                spawn(commands, p, Vec2::new(-dir * seen.range(4.0, 24.0), seen.range(10.0, 34.0)), c, 2.0, seen.range(0.35, 0.7), 40.0, true);
+            }
+        }
+        // drops fall straight down
+        SpellMotion::Drops => {
+            let (c, p) = (pick(seen), around(seen, 4.0));
+            spawn(commands, p, Vec2::new(-dir * seen.range(0.0, 10.0), seen.range(-8.0, 6.0)), c, 2.0, seen.range(0.35, 0.6), -320.0, false);
+            let (c, p) = (pick(seen), around(seen, 2.0));
+            spawn(commands, p, Vec2::new(0.0, -seen.range(0.0, 12.0)), c, 1.0, 0.3, -200.0, true);
+        }
+        // rays fly straight out, fast and short
+        SpellMotion::Rays => {
+            let angle = seen.range(0.0, std::f32::consts::TAU);
+            let (c, d) = (pick(seen), Vec2::new(angle.cos(), angle.sin()));
+            spawn(commands, at + d * 5.0, d * seen.range(50.0, 90.0), c, 2.0, 0.22, 0.0, true);
+        }
+        // arcs of lightning jump about
+        SpellMotion::Arcs => {
+            for _ in 0..2 {
+                let (c, p) = (pick(seen), around(seen, 8.0));
+                spawn(commands, p, Vec2::new(seen.range(-40.0, 40.0), seen.range(-40.0, 40.0)), c, 1.0, 0.12, 0.0, false);
+            }
+        }
+        // bubbles drift up
+        SpellMotion::Bubbles => {
+            let (c, p) = (pick(seen), around(seen, 5.0));
+            spawn(commands, p, Vec2::new(-dir * seen.range(0.0, 10.0), seen.range(4.0, 16.0)), c, 3.0, seen.range(0.5, 0.9), 14.0, false);
+        }
     }
 }
 
@@ -499,8 +550,12 @@ pub fn emit(
         }
         // heat-seeking missiles leave a trail of golden sparks
         for p in s.projectiles.iter().filter(|p| p.owner == i) {
-            if data.moves[p.move_index].projectile.as_ref().is_some_and(|d| d.homing) && s.frame % 2 == 0 {
-                let at = Vec2::new((p.x / PX) as f32, GROUND_Y + (p.y / PX) as f32);
+            let mv = &data.moves[p.move_index];
+            let at = Vec2::new((p.x / PX) as f32, GROUND_Y + (p.y / PX) as f32);
+            let spell = (p.spell > 0).then(|| mv.spells.get(p.spell as usize - 1)).flatten();
+            if let Some(spell) = spell {
+                spell_trail(&mut commands, &mut seen, at, spell, s.frame, if p.vx < 0 { -1.0 } else { 1.0 });
+            } else if mv.projectile.as_ref().is_some_and(|d| d.homing) && s.frame % 2 == 0 {
                 spawn(&mut commands, at, Vec2::new(seen.range(-10.0, 10.0), seen.range(-6.0, 10.0)), gold[(s.frame as usize / 2) % 3], 2.0, 0.3, 0.0, true);
             }
         }

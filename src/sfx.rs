@@ -361,7 +361,12 @@ fn play_fight_sounds(
             let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
             let active = f.state == FighterState::Attack && f.state_frame + 1 <= mv.startup;
             let live = sustained.iter_mut().find(|(_, s)| s.owner == i && s.on);
-            match (mv.sfx.sustain.as_deref().filter(|_| active), live) {
+            // (a spell's chant is its own: the move's own is for the move's own form)
+            let chant = match f.spell as usize {
+                0 => mv.sfx.sustain.as_deref(),
+                k => mv.spells.get(k - 1).map(|s| s.chant.as_str()).or(mv.sfx.sustain.as_deref()),
+            };
+            match (chant.filter(|_| active), live) {
                 (Some(name), None) => {
                     if let Some(handle) = sounds.groups.get(name).and_then(|v| v.first()) {
                         start_sustain.push((i, handle.clone()));

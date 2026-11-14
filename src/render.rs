@@ -504,8 +504,11 @@ pub fn animate_stars(
                 }
                 // a charged star is bigger
                 tf.scale = Vec3::splat(p.power as f32 / 100.0);
-                let flicker = (p.age / 3 % data.map_or(STAR_FRAMES, |d| d.drawing_count()) as u32) as usize;
-                let base = data.map_or("star", |d| d.image_name());
+                // a spell's form has its own pictures
+                let spell = (p.spell > 0).then(|| roster.0[sel.chars[*i]].moves[p.move_index].spells.get(p.spell as usize - 1)).flatten();
+                let drawings = spell.map_or_else(|| data.map_or(STAR_FRAMES, |d| d.drawing_count()), |s| s.drawings.max(1));
+                let flicker = (p.age / 3 % drawings as u32) as usize;
+                let base = spell.map_or_else(|| data.map_or("star", |d| d.image_name()), |s| s.image.as_str());
                 if let Some(image) = handles.0.get(*i).and_then(|m| m.get(&format!("{base}_{flicker}"))) {
                     if sprite.image != *image {
                         sprite.image = image.clone();

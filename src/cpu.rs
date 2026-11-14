@@ -553,7 +553,7 @@ mod tests {
         let mut s = GameState::new();
         s.fighters[0].x = -150 * PX;
         s.fighters[1].x = 50 * PX;
-        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100 });
+        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0 });
         let mut defended = 0;
         for window in 0..60 {
             s.frame = window * 8;
@@ -578,7 +578,7 @@ mod tests {
         let mut s = GameState::new();
         s.fighters[0].x = -150 * PX;
         s.fighters[1].x = 50 * PX;
-        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100 });
+        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0 });
         let slams = (0..40u32).filter(|w| {
             s.frame = w * 8;
             cpu_input_vs(&s, 1, &anaran, &gunslinger).has(Input::HEAVY)

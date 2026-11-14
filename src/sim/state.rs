@@ -31,6 +31,8 @@ pub struct Projectile {
     pub land_x: i32,
     /// Damage as a percentage of the move's (100 = uncharged).
     pub power: i32,
+    /// The form of the move's spell it is (0: the move's own; see `SpellData`).
+    pub spell: u8,
 }
 
 impl Minion {
@@ -1134,7 +1136,8 @@ impl GameState {
             if f.finisher {
                 power = power * 150 / 100;
             }
-            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x, power });
+            let spell = if mv.spells.is_empty() { 0 } else { f.spell };
+            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x, power, spell });
             let f = &mut self.fighters[owner];
             f.shots += 1;
             f.launched = true;
@@ -1236,7 +1239,8 @@ impl GameState {
             let (x, y) = (f.x + f.facing * p.x * PX, f.y + p.y * PX);
             let (vx, vy) = if p.homing { Self::missile_launch_velocity(p, f.facing) } else { (f.facing * Self::missile_speed(p), 0) };
             let move_index = f.attack;
-            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x: 0, power: 100 });
+            let spell = if mv.spells.is_empty() { 0 } else { f.spell };
+            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x: 0, power: 100, spell });
             self.fighters[owner].shots += 1;
             self.fighters[owner].launched = true;
         }
@@ -3058,7 +3062,7 @@ mod tests {
     #[test]
     fn a_star_that_hits_nothing_fizzles_out() {
         let mut s = GameState::new();
-        s.projectiles.push(Projectile { owner: 0, x: 0, y: 100 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100 });
+        s.projectiles.push(Projectile { owner: 0, x: 0, y: 100 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0 });
         // Park the opponent far away so the star never reaches them.
         for _ in 0..100 {
             step(&mut s, 0, 0);
@@ -3070,7 +3074,7 @@ mod tests {
     #[test]
     fn the_star_is_cleared_between_rounds() {
         let mut s = summon_vs(0, 80 * PX);
-        s.projectiles.push(Projectile { owner: 0, x: 0, y: 50 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100 });
+        s.projectiles.push(Projectile { owner: 0, x: 0, y: 50 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0 });
         s.fighters[1].health = 1;
         s.phase = Phase::RoundEnd(GameState::ROUND_END_FRAMES - 1);
         step(&mut s, 0, 0);
@@ -3969,12 +3973,13 @@ mod tests {
         let jab = &c.moves[c.find_move(Button::Light, false, false).unwrap()];
         assert!(jab.startup <= 5 && jab.hitbox.w > 0, "quick quill stabs (a bit slower than they were)");
         let fin = &c.moves[c.find_finisher().unwrap()];
-        assert!(fin.bleed.is_some() && fin.say.as_deref().unwrap().contains("{enemy}"), "the book writes about the enemy and makes them bleed");
+        assert!(fin.bleed.is_some(), "the book makes them bleed");
         assert!(fin.projectile.as_ref().is_some_and(|p| p.homing && p.unblockable), "an unblockable homing particle");
         let heavy = &c.moves[c.find_move(Button::Heavy, false, false).unwrap()];
         assert!(heavy.sparks.is_some() && heavy.projectile.as_ref().is_some_and(|p| p.lob && p.over_target), "sparks, then knives from a portal over the enemy");
         let special = &c.moves[c.find_move(Button::Special, false, false).unwrap()];
-        assert!(special.beam.is_some() && special.say.is_some());
+        assert!(special.beam.is_some());
+        assert!(c.moves.iter().all(|m| m.say.is_none()), "he has voices now, no speech bubbles");
     }
 
     #[test]
@@ -4067,7 +4072,6 @@ mod tests {
         near.fighters[1].x = 50 * PX;
         near.step([Input(Input::HEAVY), Input(0)], [&c, &e]);
         assert_eq!(c.moves[near.fighters[0].attack].name, "Sperm Whale");
-        assert_eq!(c.moves[near.fighters[0].attack].say.as_deref(), Some("I just read this book..."));
         let mut bitten = false;
         for _ in 0..80 {
             near.step([Input(0), Input(0)], [&c, &e]);
@@ -4453,6 +4457,44 @@ mod tests {
         let open = run(false);
         assert!(open > 0, "the lash lands on an enemy in the open");
         assert_eq!(run(true), open, "and guarding changes nothing: it can't be blocked");
+    }
+
+    #[test]
+    fn anaran_reads_a_different_spell_each_time_and_his_missiles_are_that_spell() {
+        let anaran = CharacterData::from_ron(include_str!("../../assets/characters/anaran.ron")).unwrap();
+        let reading = anaran.moves.iter().position(|m| !m.spells.is_empty()).unwrap();
+        let forms = anaran.moves[reading].spells.len() + 1;
+        let e = ayz();
+        let mut s = GameState::new();
+        s.fighters[0].x = -300 * PX;
+        s.fighters[1].x = 300 * PX;
+        s.fighters[1].health = 1_000_000;
+        s.fighters[1].max_health = 1_000_000;
+        let (mut seen, mut last) = (vec![false; forms], None);
+        for cast in 0..40 {
+            let before = s.projectiles.len();
+            // hold the button for a second and a half, then let go
+            let mut first_missile = None;
+            for frame in 0..90 {
+                s.step([Input(Input::LIGHT), Input(0)], [&anaran, &e]);
+                if frame == 0 {
+                    assert_eq!(s.fighters[0].attack, reading);
+                }
+                if first_missile.is_none() && s.projectiles.len() > before {
+                    first_missile = Some(s.projectiles.last().unwrap().spell);
+                }
+            }
+            let spell = s.fighters[0].spell;
+            assert!((spell as usize) < forms, "cast {cast}: spell {spell} of {forms}");
+            assert_ne!(Some(spell), last, "cast {cast}: the same spell twice in a row");
+            assert_eq!(first_missile, Some(spell), "cast {cast}: the missile is the spell being read");
+            seen[spell as usize] = true;
+            last = Some(spell);
+            for _ in 0..60 {
+                s.step([Input(0), Input(0)], [&anaran, &e]);
+            }
+        }
+        assert!(seen.iter().all(|&x| x), "every form came up in forty casts: {seen:?}");
     }
 
     #[test]
