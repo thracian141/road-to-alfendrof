@@ -51,6 +51,15 @@ pub struct CharacterData {
     /// The CPU plays this one at the edge of its reach: close enough to hit, backing off when the enemy comes closer.
     #[serde(default)]
     pub cpu_spacing: bool,
+    /// A training dummy: as the CPU it just stands there and takes it.
+    #[serde(default)]
+    pub dummy: bool,
+    /// His hits claw gold coins out of whoever he hits (drawn: coins fly from them).
+    #[serde(default)]
+    pub coin_hits: bool,
+    /// The special meter is drawn as gold he has collected.
+    #[serde(default)]
+    pub gold_meter: bool,
     /// What Light, Heavy and Special do, in that order, for the character select.
     #[serde(default)]
     pub blurbs: Vec<String>,
@@ -159,6 +168,12 @@ pub enum AnimKind {
     Portal,
     /// The Haymaker's scythe spun round him, then the red launch into the air (8 drawings).
     Reap,
+    /// The Goblin King's light: one of four limbs flails out at random (`Fighter::limb`), each with its own wind-up and
+    /// strike (8 drawings: `flail_<limb * 2 + strike>`).
+    Flail,
+    /// The Goblin King's heavy: crouched while it charges, the pounce, clinging to the enemy clawing with both arms
+    /// (two drawings), and dropping off (6 drawings).
+    Pounce,
 }
 
 /// A move whose shots, once `shots` of them have been blocked (without a hit in between, and not too long apart),
@@ -177,6 +192,9 @@ pub enum ZoneKind {
     Glitch,
     /// A spill on the ground: whoever stands on it (except its owner) has their controls reversed.
     Spill,
+    /// A gold coin on the ground: an enemy who steps on it calls up one of its owner's goblins there, which goes for
+    /// them (the move's `minions`).
+    Coin,
 }
 
 /// Where and for how long a move leaves a zone: `half_width` pixels either side of its middle, for `life` frames.
@@ -309,6 +327,11 @@ pub struct ProjectileData {
     /// and splashes for `splash_radius` pixels, hurting anyone near the ground.
     #[serde(default)]
     pub lob: bool,
+    /// A thrown coin: it flies in an arc from the hand (with gravity) to a spot near where the opponent stood, and
+    /// lies there as a `ZoneKind::Coin` (the move's `zone`). Shots of a volley land on alternate sides of them,
+    /// `spread` pixels further out each pair. Caught in the air, it hurts instead.
+    #[serde(default)]
+    pub coin: bool,
     #[serde(default)]
     pub splash_radius: i32,
     /// How high the moon hangs, in pixels.
@@ -356,6 +379,9 @@ pub struct MinionData {
     /// Fights like a little fighter (walks, dashes, punches in a pair, rolls away) instead of swarming and biting.
     #[serde(default)]
     pub agent: bool,
+    /// Only called up by a coin being stepped on (see `ZoneKind::Coin`), not when the move ends its startup.
+    #[serde(default)]
+    pub from_coins: bool,
     pub count: u32,
     pub lifetime: u32,
     pub interval: u32,
@@ -560,6 +586,9 @@ pub struct MoveData {
     pub launch_damage: i32,
     #[serde(default)]
     pub launch_radius: i32,
+    /// A pounce that clings to whoever it hits (see `LatchData`).
+    #[serde(default)]
+    pub latch: Option<LatchData>,
     /// A move that pulls him through the air ends in a floor smash: once the pull has brought him to the opponent he
     /// plunges to the floor, and the landing deals this much (the catch itself deals `damage`).
     #[serde(default)]
@@ -784,6 +813,20 @@ pub struct BeamData {
     /// `lead` and no `sweep` the column stays where it is).
     #[serde(default)]
     pub whale: bool,
+}
+
+/// Clinging to the enemy a pounce hit (the Goblin King's heavy), clawing them every `every` frames for `damage`; he
+/// can't be hit while he clings. Charged at least `min_charge` frames, it holds: an enemy who didn't block is stunned
+/// for `frames` plus `per_charge` for each frame charged beyond `min_charge`; one who blocked gets only
+/// `blocked_scratches` scratches (and no stun). Charged less, it is an ordinary hit and can be blocked.
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct LatchData {
+    pub min_charge: u32,
+    pub frames: u32,
+    pub per_charge: u32,
+    pub every: u32,
+    pub damage: i32,
+    pub blocked_scratches: u32,
 }
 
 /// When a held move fires: at held frame `first`, then every `every` frames.

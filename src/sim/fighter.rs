@@ -138,6 +138,16 @@ pub struct Fighter {
     pub spell: u8,
     /// What the next form is picked from.
     pub spell_seed: u32,
+    /// The limb the Goblin King's light flails with (0..4, see `AnimKind::Flail`): never the same twice running.
+    pub limb: u8,
+    /// Clinging to an enemy after a pounce (see `LatchData`): who, frames left, frames so far, and whether they are
+    /// stunned (they didn't block). Can't be hit meanwhile.
+    pub latch_target: usize,
+    pub latch_left: u32,
+    pub latch_timer: u32,
+    pub latch_stuns: bool,
+    /// In the air on a pounce that clings (it can't be hit once it has leapt).
+    pub pouncing: bool,
     /// Which way the drawing faces: the opponent, except a bat (or a bat roll) faces where it is flying.
     pub heading: i32,
     /// This fighter's roll is a bat too.
@@ -336,6 +346,12 @@ impl Fighter {
             shots_blocked_timer: 0,
             spell: 0,
             spell_seed: 0,
+            limb: 0,
+            latch_target: 0,
+            latch_left: 0,
+            latch_timer: 0,
+            latch_stuns: false,
+            pouncing: false,
             heading: facing,
             bat_roll: false,
             held: false,
@@ -363,7 +379,7 @@ impl Fighter {
 
     /// Can't be hit right now (mid-roll).
     pub fn invulnerable(&self) -> bool {
-        (self.state == FighterState::Roll && Self::ROLL_SAFE.contains(&self.state_frame)) || self.hidden
+        (self.state == FighterState::Roll && Self::ROLL_SAFE.contains(&self.state_frame)) || self.hidden || self.latch_left > 0 || self.pouncing
     }
 
     fn begin_dash(&mut self, dir: i32) {
@@ -393,6 +409,7 @@ impl Fighter {
         if self.state != state {
             self.state = state;
             self.state_frame = 0;
+            self.pouncing = false;
         }
     }
 
@@ -476,6 +493,12 @@ impl Fighter {
 
     fn begin_attack(&mut self, index: usize, mv: &MoveData) {
         // a move with spells reads one: a form other than the one it read last time
+        self.pouncing = false;
+        // a flailing light picks another limb at random
+        if mv.anim == super::data::AnimKind::Flail {
+            self.spell_seed = self.spell_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            self.limb = ((self.limb as u32 + 1 + (self.spell_seed >> 16) % 3) % 4) as u8;
+        }
         if !mv.spells.is_empty() {
             self.spell_seed = self.spell_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let forms = mv.spells.len() as u32 + 1;
@@ -666,6 +689,13 @@ impl Fighter {
                 self.vy = 0;
                 self.neutral(input, pressed, data);
             }
+            FighterState::Attack if self.latch_left > 0 => {
+                // clinging to the enemy: the game state keeps him on them and does the clawing
+                self.state_frame -= 1;
+                self.hovering = true;
+                self.vx = 0;
+                self.vy = 0;
+            }
             FighterState::Attack => {
                 let mv = &data.moves[self.attack];
                 self.armored = mv.committed && self.state_frame >= mv.commit_frame();
@@ -691,8 +721,10 @@ impl Fighter {
                     self.vy = up;
                     self.vx = -self.facing * back;
                 }
-                // a leap jumps when its startup ends; landing ends it
-                if mv.leap > 0 && self.state_frame == mv.startup && self.grounded() {
+                // a leap jumps when its startup ends (a charged one when the button is let go); landing ends it
+                let charging = mv.charge_frames > 0 && self.charge < mv.charge_frames && input.has(button_flag(mv.button));
+                if mv.leap > 0 && self.state_frame == mv.startup && self.grounded() && !charging {
+                    self.pouncing = mv.latch.is_some();
                     self.vy = mv.leap;
                     self.vx = self.facing * mv.leap_vx;
                     self.air_used = true;
@@ -725,9 +757,11 @@ impl Fighter {
                     }
                 }
                 if self.grounded() && !self.air_used && self.vy <= 0 {
-                    if mv.lunge != 0 && self.state_frame <= mv.startup + mv.active {
+                    // (a flailing light only steps in when it kicks: limbs 2 and 3 are the feet)
+                    let lunge = if mv.anim == super::data::AnimKind::Flail && self.limb < 2 { 0 } else { mv.lunge };
+                    if lunge != 0 && self.state_frame <= mv.startup + mv.active {
                         // a step in behind the strike
-                        self.vx = self.facing * mv.lunge;
+                        self.vx = self.facing * lunge;
                     } else {
                         // some moves allow walking while attacking
                         self.vx = input.horizontal() * data.walk_speed * mv.walk_pct / 100;

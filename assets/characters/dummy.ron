@@ -1,0 +1,27 @@
+// The Training Dummy: a straw-stuffed sack on a post with a target on its chest. As the CPU it never moves or attacks:
+// it just stands there and takes hits, and gets knocked about by them. A player can pick it too, as a joke: it hops
+// about and its "attacks" are flops of its straw arms that do no damage.
+// Drawings come from `python tools/gen_dummy.py`.
+(
+    name: "Training Dummy",
+    subtitle: Some("Never blocks, never complains"),
+    sprites: Some("dummy"),
+    blurbs: ["Flops a straw arm at you. Does nothing.", "Flops both straw arms. Still nothing.", "Wobbles meaningfully."],
+    color: (0.78, 0.66, 0.42),
+    dummy: true,
+    // last in the character select
+    menu_last: true,
+    walk_speed: 120,
+    jump_speed: 900,
+    moves: [
+        (name: "Straw Flop", button: Light, crouching: false, anim: Soft, walk_pct: 0,
+         startup: 8, active: 4, recovery: 12, damage: 0, hitstun: 4, blockstun: 4, knockback: 1, hitstop: 2,
+         hitbox: (x: 8, y: 20, w: 24, h: 20)),
+        (name: "Double Flop", button: Heavy, crouching: false, anim: Hard, walk_pct: 0,
+         startup: 12, active: 4, recovery: 16, damage: 0, hitstun: 4, blockstun: 4, knockback: 2, hitstop: 2,
+         hitbox: (x: 8, y: 20, w: 26, h: 24)),
+        (name: "Meaningful Wobble", button: Special, crouching: false, anim: Summon, walk_pct: 0,
+         startup: 20, active: 3, recovery: 20, damage: 0, hitstun: 0, blockstun: 0, knockback: 0, hitstop: 0,
+         hitbox: (x: 0, y: 0, w: 0, h: 0)),
+    ],
+)

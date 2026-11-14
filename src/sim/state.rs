@@ -192,6 +192,10 @@ pub fn nearest_enemy(fighters: &[Fighter], teams: &[u8], attacker: usize) -> Opt
 impl GameState {
     /// The stage spans `-STAGE_HALF_WIDTH..=STAGE_HALF_WIDTH` around x = 0.
     pub const STAGE_HALF_WIDTH: i32 = 400 * PX;
+    /// How fast a thrown coin falls (subpixels per frame, every frame).
+    const COIN_GRAVITY: i32 = 50;
+    /// How far out from a stepped-on coin its goblin comes running in from (pixels).
+    const COIN_GOBLIN_RUN: i32 = 90;
     pub const ROUND_FRAMES: u32 = 99 * 60;
     pub const ROUND_END_FRAMES: u32 = 150;
     /// The grace period and countdown before each round: three seconds.
@@ -327,6 +331,7 @@ impl GameState {
                 self.update_minions(chars, inputs);
                 self.launch_ravens(chars);
                 self.update_ravens(chars, inputs);
+                self.update_latches(chars);
                 self.resolve_hits(inputs, chars);
                 self.update_curses();
                 self.clear_projectiles(chars);
@@ -444,7 +449,10 @@ impl GameState {
     /// Put a zone on the map (a character has one of each kind at a time).
     fn add_zone(&mut self, owner: usize, move_index: usize, zone: super::data::ZoneData, x: i32) {
         let limit = Self::STAGE_HALF_WIDTH - 10 * PX;
-        self.zones.retain(|z| !(z.owner == owner && z.kind == zone.kind));
+        // a new zone replaces its owner's old one of the same kind (coins pile up)
+        if zone.kind != super::data::ZoneKind::Coin {
+            self.zones.retain(|z| !(z.owner == owner && z.kind == zone.kind));
+        }
         self.zones.push(Zone { owner, move_index, kind: zone.kind, x: x.clamp(-limit, limit), half_width: zone.half_width * PX, age: 0, life: zone.life, tick_damage: zone.tick_damage, tick_every: zone.tick_every });
     }
 
@@ -454,6 +462,47 @@ impl GameState {
             z.age += 1;
         }
         self.zones.retain(|z| z.age < z.life);
+        // a coin on the ground: an enemy who steps on it calls up one of its owner's goblins right there
+        let mut k = 0;
+        while k < self.zones.len() {
+            let z = self.zones[k];
+            let stepper = if z.kind == super::data::ZoneKind::Coin {
+                (0..self.fighters.len()).find(|&i| {
+                    let f = &self.fighters[i];
+                    self.teams[i] != self.teams[z.owner] && f.y < 4 * PX && f.state != FighterState::Ko && (f.x - z.x).abs() <= z.half_width + Fighter::HALF_WIDTH
+                })
+            } else {
+                None
+            };
+            let Some(i) = stepper else {
+                k += 1;
+                continue;
+            };
+            self.zones.remove(k);
+            if let Some(md) = chars[z.owner].moves.get(z.move_index).and_then(|m| m.minions) {
+                let slot = (0..md.count.max(1)).find(|s| !self.minions.iter().any(|m| m.owner == z.owner && m.slot == *s)).unwrap_or(0);
+                // it comes running in from the side, beyond the coin, at whoever stepped on it
+                let side = if self.fighters[i].x >= z.x { -1 } else { 1 };
+                let limit = self.stage_half_width - 10 * PX;
+                let x = (z.x + side * Self::COIN_GOBLIN_RUN * PX).clamp(-limit, limit);
+                let facing = -side;
+                self.minions.push(Minion {
+                    agent: md.agent,
+                    roll_dir: 0,
+                    health: md.health,
+                    hurt: 0,
+                    owner: z.owner,
+                    slot,
+                    x,
+                    mode: MinionMode::Charge,
+                    timer: md.interval / 2,
+                    age: 0,
+                    move_index: z.move_index,
+                    bit: false,
+                    facing,
+                });
+            }
+        }
         // bleeding: a little health every so often until it runs out
         for f in &mut self.fighters {
             if f.bleed_ticks > 0 && f.health > 0 {
@@ -638,6 +687,7 @@ impl GameState {
                 self.fighters[target].silenced = mv.silence;
             }
             self.apply_pulls(a, mv, blocked);
+            self.start_latch(a, target, base, blocked);
             self.gain_meter(a, mv, mv.damage * power / 100, blocked, chars);
             self.register_light_hit(a, mv, blocked);
             self.mark_curse(a);
@@ -658,6 +708,81 @@ impl GameState {
             }
         } else {
             attacker.shots_blocked = 0;
+        }
+    }
+
+    /// A charged pounce that lands clings to whoever it hit (see `LatchData`): for a while if they didn't block (stunned
+    /// all along), for a few scratches if they did. One charged too little was just an ordinary hit.
+    fn start_latch(&mut self, a: usize, target: usize, mv: &MoveData, blocked: bool) {
+        let Some(l) = mv.latch else { return };
+        let charge = self.fighters[a].charge;
+        if charge < l.min_charge || self.fighters[target].state == FighterState::Ko {
+            return;
+        }
+        let (left, stuns) = if blocked { (l.blocked_scratches * l.every, false) } else { (l.frames + (charge - l.min_charge) * l.per_charge, true) };
+        let f = &mut self.fighters[a];
+        (f.latch_target, f.latch_left, f.latch_timer, f.latch_stuns) = (target, left, 0, stuns);
+        if stuns {
+            let d = &mut self.fighters[target];
+            d.start_stun(FighterState::Hitstun, left + 4, 0);
+            d.held = true;
+            d.vx = 0;
+            d.vy = 0;
+        }
+    }
+
+    /// Whoever clings to an enemy rides on their back, a little off the ground, and claws them every so often; when the
+    /// time is up (or they are knocked out) he hops off.
+    fn update_latches(&mut self, chars: &[&CharacterData]) {
+        // a pounce in the air keeps steering at its target: as fast across as it takes to come down on them in the time it
+        // has left in the air, up to `leap_vx` (so walking away doesn't dodge it)
+        for a in 0..self.fighters.len() {
+            let f = &self.fighters[a];
+            if !f.pouncing || f.state != FighterState::Attack || f.latch_left > 0 {
+                continue;
+            }
+            let mv = &chars[a].moves[f.attack];
+            let g = Fighter::GRAVITY as i64;
+            let (vy, y) = (f.vy as i64, f.y.max(0) as i64);
+            // frames until it is back on the ground: vy t - g t^2 / 2 = -y
+            let air = ((vy + Self::isqrt((vy * vy + 2 * g * y) as u64) as i64) / g).max(1) as i32;
+            let dx = self.fighters[self.targets[a]].x - f.x;
+            self.fighters[a].vx = (dx / air).clamp(-mv.leap_vx, mv.leap_vx);
+        }
+        for a in 0..self.fighters.len() {
+            if self.fighters[a].latch_left == 0 {
+                continue;
+            }
+            let f = &self.fighters[a];
+            let Some(l) = chars[a].moves[f.attack].latch else {
+                self.fighters[a].latch_left = 0;
+                continue;
+            };
+            let (t, facing, stuns) = (f.latch_target, f.facing, f.latch_stuns);
+            let gone = self.fighters[t].state == FighterState::Ko || self.fighters[t].health <= 0 || f.state != FighterState::Attack;
+            let (tx, ty) = (self.fighters[t].x, self.fighters[t].y);
+            let f = &mut self.fighters[a];
+            (f.x, f.y, f.vx, f.vy) = (tx - facing * 6 * PX, ty + 18 * PX, 0, 0);
+            f.latch_timer += 1;
+            f.latch_left -= 1;
+            let (timer, left) = (f.latch_timer, f.latch_left);
+            if !gone && timer % l.every.max(1) == 0 {
+                let d = &mut self.fighters[t];
+                d.health -= l.damage;
+                if d.health <= 0 {
+                    d.start_stun(FighterState::Ko, 0, facing * 3 * PX);
+                } else if stuns {
+                    d.start_stun(FighterState::Hitstun, left + 4, 0);
+                    d.held = true;
+                }
+            }
+            if gone || left == 0 {
+                let f = &mut self.fighters[a];
+                f.latch_left = 0;
+                f.vy = 700;
+                f.vx = -facing * 250;
+                f.set_state(FighterState::Jump);
+            }
         }
     }
 
@@ -1129,6 +1254,13 @@ impl GameState {
                 vx = if p.speed_tenths > 0 { f.facing * p.speed_tenths * PX / 10 } else { f.facing * if p.speed > 0 { p.speed } else { 5 } * PX };
                 vy = if p.fan > 0 { ((f.shots as i32 * 37 + 11) % (2 * p.fan + 1) - p.fan) * PX / 10 } else { 0 };
             }
+            // a coin is thrown up in an arc to land on alternate sides of the target, further out each pair
+            if p.coin {
+                let side = if f.shots % 2 == 0 { -1 } else { 1 };
+                let land = target.x + side * p.spread * (1 + f.shots as i32 / 2) * PX;
+                vx = (land - x) / frames;
+                vy = (Self::COIN_GRAVITY * frames * (frames + 1) / 2 - y) / frames;
+            }
             if p.homing {
                 (vx, vy) = Self::missile_launch_velocity(p, f.facing);
             }
@@ -1281,7 +1413,7 @@ impl GameState {
                 continue;
             }
             let mv = &chars[owner].moves[f.attack];
-            let Some(md) = mv.minions else { continue };
+            let Some(md) = mv.minions.filter(|md| !md.from_coins) else { continue };
             if f.state_frame != mv.startup + 1 {
                 continue;
             }
@@ -1541,12 +1673,31 @@ impl GameState {
                 p.vy = (p.vy as i64 * speed / now) as i32;
                 close = data.homing && dist <= (data.detonate * PX) as i64;
             }
+            if data.coin {
+                p.vy -= Self::COIN_GRAVITY;
+            }
             p.x += p.vx;
             p.y += p.vy;
             p.age += 1;
 
             let defender = self.targets[owner];
             let hurt = if data.pierces_dodges { self.undodged_hurtbox(defender) } else { self.hurtbox(defender) };
+            // a coin hurts whoever it hits in the air; one that reaches the floor lies there (a `ZoneKind::Coin`)
+            if data.coin {
+                let (hw, hh) = (data.size.0 * PX / 2, data.size.1 * PX / 2);
+                if p.x - hw < hurt[2] && hurt[0] < p.x + hw && p.y - hh < hurt[3] && hurt[1] < p.y + hh {
+                    let blocked = self.can_block(defender, inputs[defender]) && !data.unblockable;
+                    let dir = if p.vx >= 0 { 1 } else { -1 };
+                    self.apply_hit(defender, &mv.as_shot(), dir, blocked, p.power);
+                } else if p.y <= 0 {
+                    if let Some(zone) = mv.zone {
+                        self.add_zone(owner, p.move_index, zone, p.x);
+                    }
+                } else if p.age < data.lifetime {
+                    self.projectiles.push(p);
+                }
+                continue;
+            }
             // a lob comes down and splashes on the ground around where it lands
             if data.lob {
                 if p.age >= data.travel_frames.max(1) {
@@ -1880,6 +2031,144 @@ mod tests {
         }
         assert_eq!(s.fighters[0].y, 0);
         assert_eq!(s.fighters[0].state, FighterState::Idle);
+    }
+
+    fn goblin_king() -> CharacterData {
+        CharacterData::from_ron(&std::fs::read_to_string("assets/characters/goblin_king.ron").unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_goblin_kings_light_flails_with_a_different_limb_each_time() {
+        let g = goblin_king();
+        let mut s = GameState::new();
+        let mut limbs = Vec::new();
+        for _ in 0..8 {
+            s.step([Input(Input::LIGHT), Input::default()], [&g, &g]);
+            limbs.push(s.fighters[0].limb);
+            for _ in 0..30 {
+                s.step([Input::default(); 2], [&g, &g]);
+            }
+        }
+        assert!(limbs.windows(2).all(|w| w[0] != w[1]), "never the same limb twice running: {limbs:?}");
+        let used: std::collections::BTreeSet<_> = limbs.iter().collect();
+        assert!(used.len() >= 3, "all over the place: {limbs:?}");
+    }
+
+    /// Charge the pounce for `charge` frames and let go, the enemy `gap` px away, blocking or not; returns the state once
+    /// the pounce has landed (or missed).
+    fn pounce(charge: u32, block: bool) -> GameState {
+        let g = goblin_king();
+        let mut s = GameState::new();
+        s.fighters[0].x = 0;
+        s.fighters[1].x = 60 * PX;
+        // P2 holds block
+        let guard = Input(if block { Input::BLOCK } else { 0 });
+        for _ in 0..(charge + 6) {
+            s.step([Input(Input::HEAVY), guard], [&g, &g]);
+        }
+        for _ in 0..30 {
+            s.step([Input::default(), guard], [&g, &g]);
+            if s.fighters[0].latch_left > 0 || s.fighters[0].state != FighterState::Attack {
+                break;
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn a_charged_pounce_clings_and_stuns_and_he_cant_be_hit_meanwhile() {
+        let g = goblin_king();
+        let mut s = pounce(60, false);
+        assert!(s.fighters[0].latch_left > 0, "he clings to them");
+        assert!(s.fighters[0].invulnerable(), "and can't be hit while he does");
+        let (start, cling) = (s.fighters[1].health, s.fighters[0].latch_left);
+        let mut stunned = true;
+        for _ in 0..cling {
+            s.step([Input::default(), Input(Input::LIGHT)], [&g, &g]);
+            stunned &= s.fighters[1].state == FighterState::Hitstun || s.fighters[0].latch_left == 0;
+        }
+        assert!(stunned, "stunned for as long as he clings");
+        assert!(s.fighters[1].health < start - 40, "clawed all along: {} -> {}", start, s.fighters[1].health);
+        assert_eq!(s.fighters[0].latch_left, 0, "and then he lets go");
+    }
+
+    #[test]
+    fn the_pounce_is_aimed_at_the_enemy_near_or_far_and_he_cant_be_hit_on_the_way() {
+        let g = goblin_king();
+        for gap in [40, 120, 200] {
+            let mut s = GameState::new();
+            s.fighters[0].x = -100 * PX;
+            s.fighters[1].x = (gap - 100) * PX;
+            for _ in 0..40 {
+                s.step([Input(Input::HEAVY), Input::default()], [&g, &g]);
+            }
+            let mut untouchable = true;
+            for _ in 0..40 {
+                s.step([Input::default(); 2], [&g, &g]);
+                if s.fighters[0].latch_left > 0 {
+                    break;
+                }
+                untouchable &= s.fighters[0].grounded() || s.fighters[0].invulnerable();
+            }
+            assert!(s.fighters[0].latch_left > 0, "it reached them {gap} px away");
+            assert!(untouchable, "and couldn't be hit in the air ({gap} px)");
+        }
+    }
+
+    #[test]
+    fn a_longer_charge_clings_longer() {
+        assert!(pounce(60, false).fighters[0].latch_left > pounce(20, false).fighters[0].latch_left);
+    }
+
+    #[test]
+    fn a_blocked_pounce_gets_three_scratches_and_no_stun() {
+        let g = goblin_king();
+        let mut s = pounce(60, true);
+        assert!(s.fighters[0].latch_left > 0, "he still clings on");
+        let l = g.moves.iter().find_map(|m| m.latch).unwrap();
+        assert_eq!(s.fighters[0].latch_left, l.blocked_scratches * l.every);
+        assert!(!s.fighters[0].latch_stuns);
+        let start = s.fighters[1].health;
+        while s.fighters[0].latch_left > 0 {
+            s.step([Input::default(); 2], [&g, &g]);
+        }
+        assert_eq!(start - s.fighters[1].health, l.blocked_scratches as i32 * l.damage, "three scratches");
+    }
+
+    #[test]
+    fn a_barely_charged_pounce_is_an_ordinary_blockable_hit() {
+        let s = pounce(2, true);
+        assert_eq!(s.fighters[0].latch_left, 0, "no clinging");
+        let chip = s.fighters[1].max_health - s.fighters[1].health;
+        assert!(chip > 0 && chip <= 3, "just the chip of a blocked hit: {chip}");
+    }
+
+    #[test]
+    fn thrown_coins_land_round_the_enemy_and_stepping_on_one_calls_up_a_goblin() {
+        let g = goblin_king();
+        let mut s = GameState::new();
+        s.fighters[0].x = -100 * PX;
+        s.fighters[1].x = 100 * PX;
+        s.fighters[0].meter = Fighter::METER_MAX;
+        s.step([Input(Input::SPECIAL), Input::default()], [&g, &g]);
+        for _ in 0..120 {
+            s.step([Input::default(); 2], [&g, &g]);
+        }
+        let coins: Vec<_> = s.zones.iter().filter(|z| z.kind == ZoneKind::Coin).map(|z| (z.x - s.fighters[1].x) / PX).collect();
+        assert_eq!(coins.len(), 4, "four coins on the ground round them: {coins:?}");
+        assert!(coins.iter().any(|&d| d < 0) && coins.iter().any(|&d| d > 0), "on both sides: {coins:?}");
+        assert_eq!(s.fighters[0].meter, 0, "the gold is spent");
+        assert!(s.minions.is_empty(), "no goblins until a coin is stepped on");
+        // walk onto the nearest coin on the left
+        for _ in 0..60 {
+            s.step([Input::default(), Input(Input::LEFT)], [&g, &g]);
+            if !s.minions.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(s.minions.len(), 1, "a goblin came up");
+        assert_eq!(s.minions[0].owner, 0, "the king's");
+        assert_eq!(s.zones.iter().filter(|z| z.kind == ZoneKind::Coin).count(), 3, "and the coin is gone");
     }
 
     #[test]

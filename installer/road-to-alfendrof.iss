@@ -4,7 +4,7 @@
 
 #define AppName "Road to Alfendrof"
 #ifndef AppVersion
-#define AppVersion "0.1.27"
+#define AppVersion "0.1.28"
 #endif
 #define AppExe "RoadToAlfendrof.exe"
 

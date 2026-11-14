@@ -67,7 +67,28 @@ pub fn cpu_input(state: &GameState, me: usize, data: &CharacterData) -> Input {
 /// against a ranged opponent (it dodges and answers shots, closes the gap and doesn't back off) than a
 /// close-range one (a ranged CPU then keeps further away and shoots more), and every champion uses
 /// its own tools.
+/// A CPU charging a pounce (the Goblin King's heavy) keeps the button down for a while, longer the further off the enemy
+/// is (and a bit longer or shorter at random), then lets go. `None` when it isn't charging one.
+pub fn pounce_charge(state: &GameState, me: usize, data: &CharacterData) -> Option<Input> {
+    let m = &state.fighters[me];
+    if m.state != FighterState::Attack {
+        return None;
+    }
+    let mv = &data.moves[m.attack.min(data.moves.len() - 1)];
+    if mv.latch.is_none() || mv.charge_frames == 0 || m.state_frame >= mv.startup || m.latch_left > 0 {
+        return None;
+    }
+    let dist = ((state.fighters[state.targets[me]].x - m.x).abs() / PX) as u32;
+    let jitter = (state.frame.wrapping_sub(m.charge) / 7 * 2_654_435_761 % 23) as u32;
+    let want = (14 + dist / 4 + jitter).min(mv.charge_frames);
+    Some(Input(if m.charge < want { Input::HEAVY } else { 0 }))
+}
+
 pub fn cpu_input_vs(state: &GameState, me: usize, data: &CharacterData, opp: &CharacterData) -> Input {
+    // a training dummy does nothing at all
+    if data.dummy {
+        return Input::default();
+    }
     let input = choose_input(state, me, data, opp);
     // a heavy that's cooling down does nothing, so don't waste the press (a light goes out instead)
     let cooling = data.find_move(Button::Heavy, false, false).is_some_and(|i| state.fighters[me].on_cooldown(i, data));
@@ -149,6 +170,9 @@ fn choose_input(state: &GameState, me: usize, data: &CharacterData, opp: &Charac
                 let stop = reading && (opponent_dist <= 60 || m.charge >= ch.first + ch.every + 40);
                 return Input(if stop { 0 } else { Input::LIGHT });
             }
+        }
+        if let Some(hold) = pounce_charge(state, me, data) {
+            return hold;
         }
         // Junkhead: once a heavy or the special has connected, go straight into lights (tapped fast so each press registers)
         if data.light_after_heavy && m.hit_done && data.moves[m.attack].button != Button::Light {

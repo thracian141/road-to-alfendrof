@@ -1,0 +1,60 @@
+// The Goblin King: a scrappy close-range brawler who claws gold out of whoever he hits, then spends it on goblins.
+// Drawings come from `python tools/gen_goblin_king_sprites.py` (posed from tools/goblin_king_art.png).
+//
+// Light: he flails at the enemy with a random limb each time (a scratch with either hand, a slap of either foot; never
+//        the same one twice running). The third hit of a combo (the finisher) is a bite: a little leap at them, jaws first.
+// Heavy: hold to charge, crouched; let go and he pounces right at the enemy (aimed to come down on them, steering after them
+//        in the air, up to about 180 px away; only a double jump gets out from under it) and clings to them (`latch`), clawing with both
+//        hands. If they didn't block they are stunned for as long as he clings, longer the longer it charged; if they
+//        blocked he gets three scratches in and drops off. He can't be hit while he clings. Barely charged, it is an
+//        ordinary hit that can be blocked.
+// Special: his meter is the gold he has clawed out (`gold_meter`). He throws four coins in arcs that land around the
+//        enemy (`coin`); one that hits them on the way hurts. A coin on the ground calls up a goblin when they step on it,
+//        and it goes for them (`from_coins`).
+// See ayz.ron for what each field means; latch, coin and from_coins are explained in src/sim/data.rs.
+(
+    name: "Goblin King",
+    subtitle: Some("Czar of the goblin minority"),
+    sprites: Some("goblin_king"),
+    blurbs: ["Flails with a random hand or foot every time, then bites. Every hit claws gold out of them.", "Hold to charge, then pounce and cling on clawing. Stuns if not blocked, longer the longer it charged.", "Throws his gold around the enemy. Coins hurt in the air; stepping on one calls up a goblin."],
+    color: (0.55, 0.78, 0.4),
+    coin_hits: true,
+    gold_meter: true,
+    walk_speed: 220,
+    jump_speed: 1080,
+    moves: [
+        // the kicks (two of the four limbs) carry him forward (`lunge`)
+        (name: "Flail", button: Light, crouching: false, anim: Flail, walk_pct: 50, lunge: 450,
+         startup: 2, active: 3, recovery: 4, damage: 22, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 4,
+         hitbox: (x: 8, y: 6, w: 40, h: 40), assist: 6),
+        (name: "Low Scratch", button: Light, crouching: true, anim: Soft, walk_pct: 0,
+         startup: 3, active: 3, recovery: 4, damage: 20, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 4,
+         hitbox: (x: 8, y: 0, w: 40, h: 12)),
+        // finisher of a light combo; must come after the normal flail
+        (name: "Royal Bite", button: Light, crouching: false, anim: Kicks, walk_pct: 0, finisher_move: true,
+         leap: 420, leap_vx: 180,
+         startup: 5, active: 8, recovery: 10, damage: 42, hitstun: 18, blockstun: 10, knockback: 3, hitstop: 6,
+         hitbox: (x: 6, y: 10, w: 36, h: 34)),
+        (name: "Air Flail", button: Light, crouching: false, air: true, anim: Soft, walk_pct: 100,
+         startup: 3, active: 4, recovery: 5, damage: 20, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 4,
+         hitbox: (x: 4, y: -10, w: 40, h: 44)),
+        // hold to charge (up to a second); 12 frames or more and it clings: 20 frames plus 1 per frame charged beyond that on
+        // someone who didn't block (a scratch every 10 frames), three scratches on someone who did. It leaps in a high arc
+        // aimed to come down right on them
+        (name: "Goblin Pounce", button: Heavy, crouching: false, anim: Pounce, walk_pct: 0, cooldown: 150, guard_hits: Some(0),
+         charge_frames: 60, leap: 800, leap_vx: 560,
+         latch: Some((min_charge: 12, frames: 20, per_charge: 1, every: 10, damage: 20, blocked_scratches: 3)),
+         startup: 6, active: 40, recovery: 12, damage: 30, hitstun: 18, blockstun: 12, knockback: 2, hitstop: 6,
+         // close to his body, so it catches them as he comes down on them at the end of the arc; tall, so a single jump
+         // doesn't get out from under it (a double jump does)
+         hitbox: (x: -6, y: 0, w: 26, h: 120)),
+        // four coins (25 each if they hit in the air); a goblin bites for 16
+        (name: "Gold Rush", button: Special, crouching: false, anim: Summon, walk_pct: 0, guard_hits: Some(0),
+         volley: 4, volley_gap: 5, shot_damage: Some(25),
+         startup: 18, active: 3, recovery: 22, damage: 16, hitstun: 14, blockstun: 8, knockback: 2, hitstop: 3,
+         hitbox: (x: 0, y: 0, w: 0, h: 0),
+         projectile: Some((x: 10, y: 40, aim_y: 0, travel_frames: 48, lifetime: 120, size: (8, 8), image: Some("coin"), summon_image: Some("none"), coin: true, spread: 52)),
+         zone: Some((kind: Coin, half_width: 6, life: 600)),
+         minions: Some((count: 4, lifetime: 480, interval: 120, speed: 4, reach: 16, health: 56, from_coins: true))),
+    ],
+)

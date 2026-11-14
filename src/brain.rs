@@ -180,6 +180,14 @@ impl Brain {
 
     /// The CPU's input for fighter `me` this frame. `chars[i]` is fighter `i`'s character.
     pub fn input(&mut self, state: &GameState, me: usize, chars: [&CharacterData; 2]) -> Input {
+        // a training dummy does nothing at all
+        if chars[me].dummy {
+            return Input::default();
+        }
+        // charging a pounce: hold it a while before letting go
+        if let Some(hold) = crate::cpu::pounce_charge(state, me, chars[me]) {
+            return hold;
+        }
         if state.frame < self.last_frame {
             *self = Brain { learning: self.learning, self_aware: self.self_aware, ..Brain::new() };
         }

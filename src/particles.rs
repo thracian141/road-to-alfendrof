@@ -231,9 +231,22 @@ pub fn emit(
                     burst(&mut commands, &mut seen, at, 6, 40.0, 110.0, &guard, 2.0, 0.25, 0.0);
                 } else {
                     let n = 7 + (lost / 8) as usize;
-                    // the hitter's own colour, if they have one
-                    let own = roster.0[sel.chars[1 - i]].spark_color.map(|c| tints(c));
+                    // the hitter's own colour, if they have one (the one going for them is taken to be the hitter)
+                    let hitter = s.targets.get(i).copied().unwrap_or(0);
+                    let hitter_data = &roster.0[sel.chars[hitter]];
+                    let own = hitter_data.spark_color.map(|c| tints(c));
                     burst(&mut commands, &mut seen, at, n.min(26), 50.0, 170.0, own.as_ref().map_or(&spark[..], |c| &c[..]), 3.0, 0.35, -60.0);
+                    // a goblin king claws gold out of them: coins fly up and towards him, spinning (a thin one is a coin seen edge on)
+                    if hitter_data.coin_hits {
+                        let to_him = if s.fighters[hitter].x >= f.x { 1.0 } else { -1.0 };
+                        let gold = [Color::srgb(1.0, 0.84, 0.2), Color::srgb(0.85, 0.62, 0.1), Color::srgb(1.0, 0.97, 0.7)];
+                        for k in 0..(4 + (lost / 10) as usize).min(12) {
+                            let v = Vec2::new(to_him * seen.range(30.0, 110.0), seen.range(70.0, 170.0));
+                            let from = at + Vec2::new(seen.range(-4.0, 4.0), seen.range(-4.0, 4.0));
+                            let size = if k % 3 == 0 { 1.0 } else { 3.0 };
+                            spawn(&mut commands, from, v, gold[k % 3], size, seen.range(0.5, 0.8), -320.0, false);
+                        }
+                    }
                     spawn(&mut commands, at, Vec2::ZERO, Color::WHITE, 14.0, 0.09, 0.0, true);
                     shake.0 = shake.0.max((lost as f32 / 14.0).min(6.0));
                 }

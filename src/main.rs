@@ -405,7 +405,7 @@ fn main() {
         .add_plugins(online::OnlinePlugin)
         .add_plugins(social::SocialPlugin)
         .add_systems(Startup, spawn_camera)
-        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn, render::compact_hud).chain())
+        .add_systems(OnEnter(AppState::Fight), (spawn_fight, render::spawn_team_markers, render::spawn_skill_bar, render::spawn_cigarette_hud, render::spawn_zone_sprites, briefing::spawn, render::compact_hud, spawn_charge_bars).chain())
         .add_systems(OnExit(AppState::Fight), |mut clear: ResMut<ClearColor>, mut fixed: ResMut<Time<Fixed>>, mut handles: ResMut<render::FrameHandles>, mut rings: ResMut<outline::Rings>| {
             rings.0.clear();
             clear.0 = MENU_BACKGROUND;
@@ -440,6 +440,7 @@ fn main() {
             )
                 .run_if(in_state(AppState::Fight)),
         )
+        .add_systems(Update, sync_charge_bars.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (briefing::press_ready, briefing::update).run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_scribe_effects.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (outline::animate_outline.after(render::animate_body), render::animate_away, footprints::leave_footprints, footprints::fade_footprints).run_if(in_state(AppState::Fight)))
@@ -699,6 +700,7 @@ fn spawn_fight(
             let name = match zone.kind {
                 t2f::sim::ZoneKind::Glitch => "glitch",
                 t2f::sim::ZoneKind::Spill => "spill",
+                t2f::sim::ZoneKind::Coin => "coin",
             };
             if !effects.iter().any(|e| e == name) {
                 effects.push(name.to_string());
@@ -840,6 +842,64 @@ fn step_sim(
 }
 
 /// Pulse between 70% and 100% opacity.
+/// The bar over a fighter charging a move (the Goblin King's pounce), and its fill.
+#[derive(Component)]
+struct ChargeBar(usize, bool);
+
+const CHARGE_BAR_W: f32 = 22.0;
+
+fn spawn_charge_bars(mut commands: Commands, sim: Res<Sim>) {
+    for i in 0..sim.0.fighters.len() {
+        commands.spawn((ChargeBar(i, false), DespawnOnExit(AppState::Fight), Sprite::from_color(Color::srgb(0.08, 0.06, 0.1), Vec2::new(CHARGE_BAR_W + 2.0, 4.0)), Transform::from_xyz(0.0, 0.0, 9.0), Visibility::Hidden));
+        commands.spawn((ChargeBar(i, true), DespawnOnExit(AppState::Fight), Sprite::from_color(Color::srgb(1.0, 0.85, 0.25), Vec2::new(0.0, 2.0)), Transform::from_xyz(0.0, 0.0, 9.1), Visibility::Hidden));
+    }
+}
+
+/// While a fighter holds a chargeable move, a bar over their head fills, gold once it is full. Only the players at this
+/// screen see their own (online the other side doesn't learn how charged it is; nobody sees the CPU's).
+fn sync_charge_bars(
+    sim: Res<Sim>,
+    roster: Res<Roster>,
+    sel: Res<Selection>,
+    mode: Res<Mode>,
+    net: Option<Res<online::NetSession>>,
+    mut bars: Query<(&ChargeBar, &mut Sprite, &mut Transform, &mut Visibility)>,
+) {
+    for (ChargeBar(i, fill), mut sprite, mut tf, mut visibility) in &mut bars {
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
+        let mine = match *mode {
+            Mode::Online => net.as_ref().is_some_and(|n| n.local == *i),
+            Mode::VsCpu => *i == 0,
+            Mode::LocalVersus => *i < 2,
+            Mode::LocalTeams => true,
+        };
+        let mv = &roster.0[sel.chars[*i]].moves[f.attack.min(roster.0[sel.chars[*i]].moves.len() - 1)];
+        let charging = f.state == t2f::sim::FighterState::Attack && mv.charge_frames > 0 && f.state_frame < mv.startup && f.latch_left == 0;
+        let show = mine && charging;
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *visibility != want {
+            *visibility = want;
+        }
+        if !show {
+            continue;
+        }
+        let x = (f.x / PX) as f32;
+        let y = GROUND_Y + (f.y / PX) as f32 + 62.0;
+        let frac = (f.charge as f32 / mv.charge_frames as f32).min(1.0);
+        if *fill {
+            let w = (CHARGE_BAR_W * frac).round();
+            sprite.custom_size = Some(Vec2::new(w, 2.0));
+            tf.translation.x = x - CHARGE_BAR_W / 2.0 + w / 2.0;
+            // red until it holds on (the pounce clings), then gold, white when full
+            let clings = mv.latch.is_some_and(|l| f.charge >= l.min_charge);
+            sprite.color = if frac >= 1.0 { Color::WHITE } else if clings { Color::srgb(1.0, 0.85, 0.25) } else { Color::srgb(0.85, 0.3, 0.25) };
+        } else {
+            tf.translation.x = x;
+        }
+        tf.translation.y = y;
+    }
+}
+
 fn pulse_glow(time: Res<Time>, mut layers: Query<&mut Sprite, With<Glow>>) {
     let alpha = 0.85 + 0.15 * (time.elapsed_secs() * 2.6).sin();
     for mut sprite in &mut layers {
@@ -933,10 +993,15 @@ fn sync_hud(
         let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
         sprite.custom_size = Some(Vec2::new(w, 3.0));
         tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
-        // purple while filling, pulsing gold when ready
+        // purple while filling, pulsing gold when ready (a goblin king's is the gold he has collected: gold all along, with
+        // a glint running along it)
+        let gold = roster.0[sel.chars[*side]].gold_meter;
         sprite.color = if frac >= 1.0 {
             let pulse = 0.75 + 0.25 * (time.elapsed_secs() * 8.0).sin();
             Color::srgb(1.0 * pulse, 0.85 * pulse, 0.2 * pulse)
+        } else if gold {
+            let glint = 0.88 + 0.12 * (time.elapsed_secs() * 3.0).sin();
+            Color::srgb(0.95 * glint, 0.7 * glint, 0.12)
         } else {
             Color::srgb(0.55, 0.35, 0.9)
         };

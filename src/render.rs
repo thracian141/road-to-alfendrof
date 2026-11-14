@@ -1011,7 +1011,8 @@ pub fn animate_skill_bar(
 pub struct ZoneSprite(pub usize);
 
 pub fn spawn_zone_sprites(mut commands: Commands) {
-    for i in 0..4 {
+    // (a handful of thrown coins can lie about at once)
+    for i in 0..16 {
         commands.spawn((ZoneSprite(i), DespawnOnExit(AppState::Fight), Sprite::default(), Transform::from_xyz(0.0, 0.0, 0.3), Visibility::Hidden));
     }
 }
@@ -1028,8 +1029,10 @@ pub fn animate_zones(sim: Res<Sim>, handles: Res<FrameHandles>, mut sprites: Que
         let (name, count, y, depth) = match z.kind {
             ZoneKind::Glitch => ("glitch", 4, 39.0, 0.3),
             ZoneKind::Spill => ("spill", 2, 3.0, 0.2),
+            // a coin lies on the floor, glinting
+            ZoneKind::Coin => ("coin", 2, 2.0, 0.25),
         };
-        let frame = (sim.0.frame / if z.kind == ZoneKind::Glitch { 3 } else { 14 }) as usize % count;
+        let frame = (sim.0.frame / if z.kind == ZoneKind::Glitch { 3 } else if z.kind == ZoneKind::Coin { 20 } else { 14 }) as usize % count;
         if let Some(image) = handles.0.get(z.owner).and_then(|m| m.get(&format!("{name}_{frame}"))) {
             if sprite.image != *image {
                 sprite.image = image.clone();

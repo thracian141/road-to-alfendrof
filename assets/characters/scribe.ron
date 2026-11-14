@@ -67,7 +67,7 @@
         // up close the heavy is a pool of water opening under the enemy, and a sperm whale's head coming up out of it to bite
         (name: "Sperm Whale", sfx: (voice: Some("voice_scribe_moby_dick"), cast: Some("portal_open"), hit: Some("bite")), button: Heavy, crouching: false, anim: Write, walk_pct: 0, cooldown: 540, shared_cooldown: true, within: Some(108), sparks: Some((0.3, 0.6, 1.0)), guard_hits: Some(2), committed: true,
          beam: Some((lock_frame: 12, lead: 0, sweep: 0, width: 86, height: 62, whale: true)),
-         startup: 39, active: 6, recovery: 51, damage: 81, hitstun: 30, blockstun: 16, knockback: 5, hitstop: 8,
+         startup: 39, active: 6, recovery: 18, damage: 81, hitstun: 30, blockstun: 16, knockback: 5, hitstop: 8,
          hitbox: (x: 0, y: 0, w: 0, h: 0)),
         // three strokes, then Jesus and his beam
         (name: "Then Jesus Appeared", sfx: (voice: Some("voice_scribe_jesus"), cast: Some("holy_cast"), hit: Some("holy_hit")), button: Special, crouching: false, anim: Write, walk_pct: 0, guard_hits: Some(2), committed: true, sparks: Some((1.0, 0.92, 0.5)),

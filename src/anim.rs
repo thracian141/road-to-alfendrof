@@ -78,6 +78,12 @@ pub enum Frame {
     Latte(usize),
     /// The scythe spin: the wind-up, four drawings turning the scythe round him, the red launch, in the air, landing.
     Reap(usize),
+    /// The Goblin King's flailing light: for each of four limbs (back arm, front arm, back foot, front foot) a wind-up
+    /// and a strike, `limb * 2 + strike`.
+    Flail(usize),
+    /// The Goblin King's pounce: crouched charging (two drawings that shake), leaping, clinging and clawing (two), dropping
+    /// off.
+    Pounce(usize),
     /// Idle while he rolls a cigarette: the paper, the tobacco, the roll, a lick of the edge.
     Craft(usize),
     /// Between the alternating punches' drawings: right swinging out, right coming back, then the left.
@@ -126,6 +132,8 @@ impl Frame {
             Frame::Cover(i) => format!("cover_{i}"),
             Frame::Latte(i) => format!("latte_{i}"),
             Frame::Reap(i) => format!("reap_{i}"),
+            Frame::Flail(i) => format!("flail_{i}"),
+            Frame::Pounce(i) => format!("pounce_{i}"),
             Frame::Craft(i) => format!("craft_{i}"),
         }
     }
@@ -188,6 +196,9 @@ pub const CRAFT_FRAMES: usize = 4;
 pub const LATTE_FRAMES: usize = 3;
 /// The scythe spin and its launch.
 pub const REAP_FRAMES: usize = 8;
+/// The Goblin King's flailing light and his pounce.
+pub const FLAIL_FRAMES: usize = 8;
+pub const POUNCE_FRAMES: usize = 6;
 
 /// Bat form drawings (one wingbeat).
 pub const BAT_FRAMES: usize = 4;
@@ -255,6 +266,12 @@ pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     }
     if data.air_shot_tilt {
         v.extend((0..LEAN_FRAMES).map(Frame::Lean));
+    }
+    if data.moves.iter().any(|m| m.anim == AnimKind::Flail) {
+        v.extend((0..FLAIL_FRAMES).map(Frame::Flail));
+    }
+    if data.moves.iter().any(|m| m.anim == AnimKind::Pounce) {
+        v.extend((0..POUNCE_FRAMES).map(Frame::Pounce));
     }
     if data.moves.iter().any(|m| m.anim == AnimKind::Reap) {
         v.extend((0..REAP_FRAMES).map(Frame::Reap));
@@ -657,6 +674,17 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
                 3
             })
         }
+        AnimKind::Flail => Frame::Flail(f.limb as usize % 4 * 2 + (frame > mv.startup) as usize),
+        AnimKind::Pounce => Frame::Pounce(if f.latch_left > 0 {
+            3 + ((f.latch_timer / 6) % 2) as usize
+        } else if frame < mv.startup {
+            // crouched, shaking harder as the charge builds
+            if f.charge > 0 { ((f.charge / 4) % 2) as usize } else { 0 }
+        } else if !f.grounded() {
+            2
+        } else {
+            5
+        }),
         AnimKind::Reap => {
             // crouched with the scythe wound back, four drawings of it turning round him (one turn per hit), then the launch: rising
             // in a burst of red, falling, and the landing
