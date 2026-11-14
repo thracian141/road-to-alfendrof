@@ -540,11 +540,31 @@ def icon(kind):
 
 
 def portrait():
-    """His head, collar and shoulders, 40 x 40, on royal purple."""
-    head = SRC.crop((4, 0, 30, 26))
-    img = Image.new("RGBA", (40, 40), (52, 30, 70, 255))
-    big = head.resize((head.width * 3 // 2, head.height * 3 // 2), Image.NEAREST)
-    img.alpha_composite(big, ((40 - big.width) // 2, 1))
+    """His face from the photo (tools/goblin_king_photo.png), cropped square and shrunk to 40 x 40: the skin turned goblin
+    green and a long pointed goblin ear drawn over his own."""
+    import colorsys
+    photo = Image.open(here / "goblin_king_photo.png").convert("RGB")
+    face = photo.crop((425, 425, 2550, 2550)).resize((40, 40), Image.LANCZOS)
+    px = face.load()
+    for y in range(40):
+        for x in range(40):
+            r, g, b = px[x, y]
+            h, l, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+            # skin (warm, light, not grey): green, keeping its light and shade
+            if 0.0 <= h <= 0.11 and 0.3 < l < 0.92 and sat > 0.18 and r > b + 20:
+                nr, ng, nb = colorsys.hls_to_rgb(0.25, l * 0.78, min(0.55, sat * 0.6 + 0.12))
+                px[x, y] = (round(nr * 255), round(ng * 255), round(nb * 255))
+    # the goblin ear over his own (left side of the picture), pointing up and out, blurred like the rest of the photo
+    from PIL import ImageFilter
+    ear = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ear)
+    d.polygon([(4, 23), (9, 22), (10, 31), (6, 34), (0, 9)], fill=SKIN + (255,), outline=(60, 80, 40, 255))
+    d.line([(2, 13), (7, 25), (7, 31)], fill=SKIN_SHADE + (255,))
+    d.line([(1, 10), (4, 20)], fill=SKIN_LIGHT + (255,))
+    ear = ear.filter(ImageFilter.GaussianBlur(1.1))
+    face = face.convert("RGBA")
+    face.alpha_composite(ear)
+    img = face.convert("RGB").quantize(48, method=Image.Quantize.MEDIANCUT).convert("RGBA")
     return img
 
 
