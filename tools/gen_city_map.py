@@ -1,197 +1,167 @@
-"""The campaign's maps: `python tools/gen_city_map.py` writes assets/ui/campaign/the_city.png (384x216: the Istanbul region
-from the Black Sea down to the Sea of Marmara, the Bosphorus, the Golden Horn and Galata Tower), soon.png (the second map's
-preview) and the little circles of the levels. Palette colours and ordered dithering only, no blending, so the pixels stay
-crisp when the window scales them. Where the level circles go is in assets/campaign/campaign.ron."""
+"""The campaign's maps: `python tools/gen_city_map.py` writes assets/ui/campaign/the_city.png (576 x 324, drawn at two screen
+pixels a pixel in the default window: central Istanbul as on a map, the Golden Horn, the old city on its peninsula, the
+Bosphorus, Uskudar and Kadikoy, the Sea of Marmara below, with Galata Tower and Hagia Sophia), soon.png (the second map's
+preview) and the little circles of the levels.
+
+The look is a painted village map: round tree crowns with a lit side, red roofed houses on tan ground, patchwork fields,
+stone quays and foam along the coast. Everything is drawn from palette colours with no blending, so the pixels stay crisp.
+The land's shape is traced from a street map (coordinates below are in that map's pixels, scaled by MAP). Where the level
+circles go is in assets/campaign/campaign.ron, in map units (384 x 216)."""
 import math
 import random
 from collections import deque
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parent.parent / "assets/ui/campaign"
-W, H = 384, 216
+W, H = 576, 324
+MAP = 0.288                      # texels per pixel of the street map the shapes were traced from
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+rnd = random.Random(1453)
 
-INK = (14, 20, 40)
-# the Black Sea, the Bosphorus and the Sea of Marmara: deep, mid, light, shallow
-BLACK_SEA = [(20, 44, 92), (28, 62, 118), (44, 90, 148), (92, 150, 192)]
-MARMARA = [(24, 78, 128), (36, 106, 156), (64, 142, 182), (118, 190, 208)]
-STRAIT = [(30, 70, 122), (44, 98, 152), (72, 136, 180), (120, 182, 208)]
-FOREST_D, FOREST, GRASS, FIELD, DRY, HILL = (34, 78, 50), (52, 106, 62), (98, 146, 76), (164, 168, 90), (196, 176, 112), (114, 124, 82)
-SAND = (230, 216, 164)
-ROOF_A, ROOF_B, STONE, STONE_D, PARK = (186, 116, 82), (216, 150, 98), (178, 170, 154), (130, 122, 114), (78, 138, 82)
-GOLD, GOLD_D, WHITE = (255, 214, 92), (170, 120, 30), (250, 246, 232)
-
-
-def lattice(seed):
-    r = random.Random(seed)
-    return {(x, y): r.random() for x in range(-2, 140) for y in range(-2, 100)}
+INK = (20, 24, 40)
+DEEP, MID, LIGHT, SHALLOW, FOAM = (34, 96, 146), (50, 128, 176), (86, 168, 200), (142, 208, 214), (232, 244, 238)
+GRASS_D, GRASS, GRASS_L, MEADOW = (60, 126, 52), (92, 160, 62), (136, 190, 76), (170, 204, 90)
+LEAF_D, LEAF, LEAF_L, LEAF_H = (28, 72, 40), (46, 110, 48), (76, 150, 58), (130, 196, 84)
+DIRT, DIRT_D, SAND, STONE, STONE_D, STONE_L = (206, 186, 138), (184, 160, 112), (234, 220, 170), (176, 172, 164), (124, 120, 116), (214, 210, 200)
+ROOF_R, ROOF_O, ROOF_D, WALL, WALL_D = (196, 72, 48), (218, 106, 60), (150, 52, 44), (238, 222, 184), (170, 140, 104)
+FIELD_Y, FIELD_G, FIELD_L = (222, 206, 88), (164, 192, 70), (196, 214, 96)
+GOLD, WHITE = (255, 214, 92), (250, 246, 232)
 
 
 def make_noise(seed, scale):
-    table = lattice(seed)
+    r = random.Random(seed)
+    table = {(x, y): r.random() for x in range(-2, int(W / scale) + 6) for y in range(-2, int(H / scale) + 6)}
 
     def noise(x, y):
         fx, fy = x / scale, y / scale
         x0, y0 = math.floor(fx), math.floor(fy)
         tx, ty = fx - x0, fy - y0
         tx, ty = tx * tx * (3 - 2 * tx), ty * ty * (3 - 2 * ty)
-        a, b = table[(x0, y0)], table[(x0 + 1, y0)]
-        c, d = table[(x0, y0 + 1)], table[(x0 + 1, y0 + 1)]
+        a, b, c, d = table[(x0, y0)], table[(x0 + 1, y0)], table[(x0, y0 + 1)], table[(x0 + 1, y0 + 1)]
         return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty
 
     return noise
 
 
-big, mid, fine = make_noise(3, 40), make_noise(9, 14), make_noise(21, 5)
+big, mid, fine = make_noise(3, 60), make_noise(9, 20), make_noise(21, 6)
 
 
 def dither(value, x, y):
-    """`value` (0..1) against the ordered-dither threshold at this pixel."""
     return value * 16 > BAYER[y % 4][x % 4]
 
 
-# ---- the water ----------------------------------------------------------------------------------------------------
-# the Bosphorus, from the Black Sea in the north down to Marmara, and the Golden Horn off its end
-BOSPHORUS = [(236, 14), (234, 34), (230, 50), (222, 64), (224, 78), (216, 92), (213, 106), (208, 120), (204, 134), (202, 150)]
-GOLDEN_HORN = [(203, 138), (192, 134), (178, 124), (164, 116), (150, 106), (134, 100), (118, 96)]
+def pt(p):
+    return (p[0] * MAP, p[1] * MAP)
 
 
-def along(points, t):
-    """The point `t` (0..1) of the way along a polyline."""
-    segs = [math.dist(points[i], points[i + 1]) for i in range(len(points) - 1)]
-    at = t * sum(segs)
-    for i, s in enumerate(segs):
-        if at <= s:
-            f = at / s if s else 0
-            return points[i][0] + (points[i + 1][0] - points[i][0]) * f, points[i][1] + (points[i + 1][1] - points[i][1]) * f
-        at -= s
-    return points[-1]
+# ---- the shape of the land: traced from the street map -----------------------------------------------------------
+# all the water east and south of the European shore (the Bosphorus, the Marmara and its coasts), as a polygon
+SEA = [(738, -10), (772, 60), (742, 150), (690, 212), (650, 292), (704, 330), (690, 372), (716, 424), (696, 476), (640, 520),
+       (540, 548), (420, 542), (340, 566), (270, 604), (130, 664), (-10, 730), (-10, 1190), (2010, 1190), (1700, 1190),
+       (1560, 1086), (1400, 1040), (1250, 980), (1180, 930), (1136, 852), (1040, 834), (1000, 780), (1048, 700), (1030, 610),
+       (990, 524), (930, 430), (900, 332), (950, 250), (1022, 170), (1100, 92), (1190, -10)]
+# the Golden Horn: a channel from the top left down to the strait (x, y, half width)
+GOLDEN_HORN = [(236, -30, 26), (290, 70, 30), (372, 168, 34), (466, 252, 38), (556, 304, 42), (650, 304, 46), (730, 286, 50)]
+
+mask = Image.new("L", (W, H), 0)
+draw = ImageDraw.Draw(mask)
+draw.polygon([pt(p) for p in SEA], fill=255)
+for (x0, y0, r0), (x1, y1, r1) in zip(GOLDEN_HORN, GOLDEN_HORN[1:]):
+    steps = 30
+    for k in range(steps + 1):
+        t = k / steps
+        cx, cy, r = (x0 + (x1 - x0) * t) * MAP, (y0 + (y1 - y0) * t) * MAP, (r0 + (r1 - r0) * t) * MAP
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=255)
+# Maiden's Tower sits on a rock in the strait
+KIZ = pt((830, 272))
+draw.ellipse((KIZ[0] - 3, KIZ[1] - 2, KIZ[0] + 3, KIZ[1] + 3), fill=0)
+water = [[mask.getpixel((x, y)) > 127 for x in range(W)] for y in range(H)]
 
 
-def dist_to_line(px, py, points):
-    best = 1e9
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
-        dx, dy = x1 - x0, y1 - y0
-        t = max(0, min(1, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)))
-        best = min(best, math.hypot(px - (x0 + dx * t), py - (y0 + dy * t)))
-    return best
+def distance(source):
+    """Steps from every pixel to the nearest pixel where `source(x, y)` is true."""
+    d = [[999] * W for _ in range(H)]
+    q = deque()
+    for y in range(H):
+        for x in range(W):
+            if source(x, y):
+                d[y][x] = 0
+                q.append((x, y))
+    while q:
+        x, y = q.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < W and 0 <= ny < H and d[ny][nx] > d[y][x] + 1:
+                d[ny][nx] = d[y][x] + 1
+                q.append((nx, ny))
+    return d
 
 
-def north_coast(x):
-    return 24 + 5 * math.sin(x / 17) + 4 * math.sin(x / 7.3 + 2) + 6 * big(x, 0)
+from_land = distance(lambda x, y: not water[y][x])       # for water: how far from the shore
+from_water = distance(lambda x, y: water[y][x])          # for land: how far from the sea
 
 
-def south_coast(x):
-    if x < 215:
-        return 152 + 7 * math.sin(x / 38 + 1) + 4 * math.sin(x / 9) + 4 * big(x, 90)
-    return 150 + (x - 215) * 0.42 + 6 * math.sin(x / 23) + 3 * math.sin(x / 7)
+# where things are, in street-map pixels: (x, y, half width, half height, strength)
+CITY = [(470, 420, 330, 200, 1.3), (640, 170, 260, 250, 1.2), (180, 300, 260, 250, 1.1), (1110, 250, 290, 220, 1.2),
+        (1290, 800, 360, 230, 1.25), (1750, 640, 420, 260, 0.9), (1850, 140, 300, 190, 0.8), (60, 780, 140, 110, 0.7),
+        (1500, 920, 220, 130, 0.8), (1050, 1040, 150, 90, 0.7)]
+FOREST = [(1450, 330, 200, 150, 1.0), (1700, 120, 220, 100, 0.8), (90, 60, 170, 110, 0.8), (1180, 985, 110, 60, 0.9),
+          (880, 20, 120, 80, 0.8), (610, 420, 70, 50, 0.6), (1980, 380, 80, 200, 0.9), (1600, 440, 140, 90, 0.6)]
 
 
-water = [[False] * W for _ in range(H)]
-for y in range(H):
-    for x in range(W):
-        # the strait opens out at the Black Sea end and is narrow in the middle
-        width = 4.4 + 0.5 * math.sin(y / 9) + (max(0, 34 - y) * 0.35)
-        horn = dist_to_line(x, y, GOLDEN_HORN) < 1.6 + (x - 118) / 70
-        water[y][x] = y < north_coast(x) or y > south_coast(x) or dist_to_line(x, y, BOSPHORUS) < width or horn
-# the Princes' Islands: land in the sea, south east
-for ix, iy, r in ((262, 182, 4), (272, 186, 3), (282, 180, 3), (252, 190, 3)):
-    for y in range(iy - r, iy + r + 1):
-        for x in range(ix - r, ix + r + 1):
-            if math.hypot(x - ix, y - iy) <= r and 0 <= x < W and 0 <= y < H:
-                water[y][x] = False
-# Maiden's Tower: a speck of rock in the strait mouth
-water[146][207] = water[146][208] = water[147][207] = water[147][208] = False
-
-# distance from the coast, for the shallow tones
-dist = [[99] * W for _ in range(H)]
-queue = deque()
-for y in range(H):
-    for x in range(W):
-        if water[y][x] and any(0 <= x + dx < W and 0 <= y + dy < H and not water[y + dy][x + dx] for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
-            dist[y][x] = 0
-            queue.append((x, y))
-while queue:
-    x, y = queue.popleft()
-    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        nx, ny = x + dx, y + dy
-        if 0 <= nx < W and 0 <= ny < H and water[ny][nx] and dist[ny][nx] > dist[y][x] + 1:
-            dist[ny][nx] = dist[y][x] + 1
-            queue.append((nx, ny))
-land_dist = [[99] * W for _ in range(H)]
-queue = deque()
-for y in range(H):
-    for x in range(W):
-        if not water[y][x] and any(0 <= x + dx < W and 0 <= y + dy < H and water[y + dy][x + dx] for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
-            land_dist[y][x] = 0
-            queue.append((x, y))
-while queue:
-    x, y = queue.popleft()
-    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        nx, ny = x + dx, y + dy
-        if 0 <= nx < W and 0 <= ny < H and not water[ny][nx] and land_dist[ny][nx] > land_dist[y][x] + 1:
-            land_dist[ny][nx] = land_dist[y][x] + 1
-            queue.append((nx, ny))
-
-# the built-up parts: (x, y, radius, strength)
-CITIES = [(176, 144, 30, 1.0), (190, 126, 17, 1.0), (236, 144, 24, 0.95), (46, 112, 26, 0.8), (96, 90, 16, 0.6), (150, 70, 14, 0.6),
-          (262, 100, 16, 0.7), (130, 130, 18, 0.75), (300, 124, 20, 0.55), (84, 150, 14, 0.5)]
-
-
-def urban(x, y):
-    c = 0.0
-    for cx, cy, r, s in CITIES:
-        c = max(c, (1 - math.hypot(x - cx, (y - cy) * 1.15) / r) * s)
-    return c + (mid(x, y) - 0.5) * 0.6 + (fine(x, y) - 0.5) * 0.25
+def zone(x, y, zones):
+    sx, sy = x / MAP, y / MAP
+    s = 0.0
+    for cx, cy, rx, ry, k in zones:
+        s = max(s, (1 - math.hypot((sx - cx) / rx, (sy - cy) / ry)) * k)
+    return max(0.0, min(1.0, s + (mid(x, y) - 0.5) * 0.5))
 
 
 img = Image.new("RGB", (W, H))
 px = img.load()
+
+# ---- sea ----------------------------------------------------------------------------------------------------------
+for y in range(H):
+    for x in range(W):
+        if not water[y][x]:
+            continue
+        d = from_land[y][x]
+        if d <= 1:
+            c = FOAM if (x + y) % 3 else SHALLOW
+        elif d <= 4:
+            c = SHALLOW
+        elif d <= 10:
+            c = LIGHT if dither(0.3 + (10 - d) * 0.09, x, y) else MID
+        else:
+            c = MID if big(x, y) > 0.45 or dither(0.55, x, y) else DEEP
+        # long ripples
+        if c in (MID, DEEP) and ((x * 3 + y * 7 + int(mid(x, y) * 9)) % 31 == 0 and fine(x, y) > 0.35):
+            c = LIGHT
+        px[x, y] = c
+
+# ---- land ground ---------------------------------------------------------------------------------------------------
 for y in range(H):
     for x in range(W):
         if water[y][x]:
-            # Marmara is a little greener than the Black Sea; the strait is the same blue as the Black Sea
-            pal = MARMARA if y > south_coast(x) - 3 else BLACK_SEA
-            d = dist[y][x]
-            depth = 3 - min(3, d // 3) if d < 9 else 0
-            # shallow at the coast, deeper away from it, with the odd ripple
-            level = 3 if d <= 1 else 2 if d <= 4 else 1 if (d <= 9 or not dither(0.5 + (big(x, y) - 0.5), x, y)) else 0
-            if level == 0 and fine(x, y) > 0.72 and (x + y) % 3 == 0:
-                level = 1
-            if level == 1 and fine(x, y) > 0.8 and (x * 3 + y) % 5 == 0:
-                level = 2
-            px[x, y] = pal[level]
             continue
-        # land
-        c = urban(x, y)
+        d = from_water[y][x]
+        city = zone(x, y, CITY)
         n = mid(x, y) * 0.6 + fine(x, y) * 0.4
-        if land_dist[y][x] == 0:
-            px[x, y] = SAND if dither(0.7, x, y) else DRY
-        elif c > 0.5:
-            block = ((x // 3) * 7 + (y // 3) * 13 + (x // 6) * (y // 5)) % 5
-            street = x % 6 == 0 or y % 5 == 0
-            px[x, y] = STONE_D if street else (ROOF_A, ROOF_B, STONE, ROOF_B, ROOF_A)[block] if not (block == 4 and fine(x, y) > 0.6) else PARK
-        elif c > 0.28:
-            roof = dither((c - 0.28) / 0.22, x, y)
-            if roof:
-                px[x, y] = (ROOF_A, ROOF_B, STONE)[(x // 3 + y // 3) % 3] if (x + y) % 2 == 0 else STONE
-            else:
-                px[x, y] = GRASS if n > 0.45 else FIELD
+        if d <= 1:
+            c = SAND if fine(x, y) > 0.35 else DIRT
+        elif d == 2:
+            c = STONE if (x + y) % 2 else STONE_L
+        elif city > 0.4:
+            c = DIRT if dither(0.55 + (n - 0.5), x, y) else DIRT_D
         else:
-            forest = big(x, y) * 0.7 + fine(x, y) * 0.3
-            hill = mid(x + 60, y - 30)
-            if forest > 0.56 and dither(min(1, (forest - 0.5) * 4), x, y):
-                px[x, y] = FOREST_D if hill > 0.55 else FOREST
-            elif n > 0.55 and dither((n - 0.5) * 3, x, y):
-                px[x, y] = FIELD
-            elif hill > 0.62 and dither((hill - 0.6) * 4, x, y):
-                px[x, y] = HILL
-            else:
-                px[x, y] = GRASS
-
-# the Golden Horn's far bank: a thin sand line already comes from the coast, now the bridges and the landmarks
+            c = GRASS if n > 0.42 else GRASS_D
+            if fine(x, y) > 0.72 and dither(0.5, x, y):
+                c = GRASS_L
+            if big(x + 100, y) > 0.62 and dither(0.4, x, y):
+                c = MEADOW
+        px[x, y] = c
 
 
 def put(x, y, c):
@@ -199,127 +169,285 @@ def put(x, y, c):
         px[x, y] = c
 
 
-def strait_edges(y):
-    """Where the water of the strait starts and ends along row `y`."""
-    xs = [x for x in range(150, 300) if water[y][x]]
-    return min(xs), max(xs)
+occ = [[False] * W for _ in range(H)]
 
 
-def bridge(y):
-    """A suspension bridge over the strait: a deck, two towers and cables."""
-    left, right = strait_edges(y)
-    left, right = left - 5, right + 5
-    mid_x = (left + right) // 2
-    towers = (left + 3, right - 3)
-    for x in range(left, right + 1):
-        put(x, y, INK)
-        put(x, y - 1, (214, 210, 200))
-        if x % 4 == 0:
-            put(x, y - 2, (255, 230, 150))
-    for tx in towers:
-        for k in range(2, 9):
-            put(tx, y - k, INK)
-            put(tx + 1, y - k, STONE_D)
-    # the cables hang from the towers down to the deck in the middle
-    for x in range(towers[0], towers[1] + 1):
-        t = (x - towers[0]) / (towers[1] - towers[0])
-        sag = 6 * (1 - (2 * t - 1) ** 2) * -1 + 6
-        put(x, y - 8 + round(sag) - 1, (206, 206, 214))
-    for x in range(left, towers[0]):
-        t = (x - left) / max(1, towers[0] - left)
-        put(x, y - 1 - round(7 * t), (206, 206, 214))
-    for x in range(towers[1] + 1, right + 1):
-        t = (right - x) / max(1, right - towers[1])
-        put(x, y - 1 - round(7 * t), (206, 206, 214))
+def blocked(x0, y0, x1, y1):
+    for y in range(max(0, y0), min(H, y1 + 1)):
+        for x in range(max(0, x0), min(W, x1 + 1)):
+            if occ[y][x] or water[y][x] or from_water[y][x] <= 2:
+                return True
+    return False
 
 
-bridge(88)
-bridge(60)
+def claim(x0, y0, x1, y1):
+    for y in range(max(0, y0), min(H, y1 + 1)):
+        for x in range(max(0, x0), min(W, x1 + 1)):
+            occ[y][x] = True
 
 
-def mosque(cx, cy, dome_r, minarets):
-    for dy in range(-dome_r, 1):
-        w = int(math.sqrt(max(0, dome_r * dome_r - dy * dy)))
+# ---- fields (a patchwork, away from the city) ---------------------------------------------------------------------
+for cx, cy, fw, fh, vertical in [(1650, 950, 300, 190, False), (1880, 830, 250, 150, True), (150, 90, 220, 140, False),
+                                  (1560, 560, 200, 120, True), (1960, 990, 160, 120, False), (420, 120, 150, 100, True)]:
+    x0, y0 = int((cx - fw / 2) * MAP), int((cy - fh / 2) * MAP)
+    x1, y1 = int((cx + fw / 2) * MAP), int((cy + fh / 2) * MAP)
+    if any(not (0 <= x < W and 0 <= y < H) or water[y][x] for x in (x0, x1) for y in (y0, y1)):
+        continue
+    if zone((x0 + x1) / 2, (y0 + y1) / 2, CITY) > 0.5:
+        continue
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            if water[y][x]:
+                continue
+            stripe = ((x if vertical else y) // 3) % 2
+            colour = (FIELD_Y if (x0 // 40 + y0 // 40) % 2 else FIELD_G) if stripe else FIELD_L
+            if x in (x0, x1) or y in (y0, y1):
+                colour = GRASS_D
+            px[x, y] = colour
+    claim(x0, y0, x1, y1)
+
+# ---- roads: tan lanes between the town centres --------------------------------------------------------------------
+TOWNS = [(480, 430), (640, 200), (330, 300), (1100, 240), (1260, 800), (1000, 560), (1500, 700), (1750, 500), (1850, 160), (520, 160)]
+for i, (ax, ay) in enumerate(TOWNS):
+    for bx, by in TOWNS[i + 1:]:
+        if math.hypot(ax - bx, ay - by) > 700:
+            continue
+        steps = int(math.hypot(ax - bx, ay - by) * MAP)
+        wobble = rnd.random() * 6
+        for k in range(steps):
+            t = k / steps
+            x = (ax + (bx - ax) * t) * MAP + math.sin(t * 9 + wobble) * 2.5
+            y = (ay + (by - ay) * t) * MAP + math.cos(t * 7 + wobble) * 2.5
+            ix, iy = int(x), int(y)
+            if 0 <= ix < W - 1 and 0 <= iy < H - 1 and not water[iy][ix] and from_water[iy][ix] > 2 and zone(ix, iy, CITY) < 0.6:
+                put(ix, iy, DIRT)
+                put(ix + 1, iy, DIRT_D)
+
+# ---- houses ---------------------------------------------------------------------------------------------------------
+
+
+def house(x, y, w, h, roof):
+    """A house: a roof with a lit left slope over a cream wall, shadow to the right and below."""
+    rh = 3 if h < 6 else 4
+    for dy in range(rh):
+        for dx in range(-dy // 2, w + dy // 2 + 1):
+            c = roof if dx < w * 0.55 else ROOF_D
+            if dy == 0:
+                c = (255, 168, 120) if roof == ROOF_O else (236, 110, 84)
+            put(x + dx, y + dy, c)
+    for dy in range(rh, h):
+        for dx in range(w + 1):
+            put(x + dx, y + dy, WALL if dx < w - 1 else WALL_D)
+    put(x + w // 2, y + h - 1, (96, 64, 48))
+    for dx in range(w + 2):
+        put(x + dx + 1, y + h, DIRT_D)
+    put(x + w + 1, y + rh, DIRT_D)
+
+
+for _ in range(26000):
+    x, y = rnd.randrange(6, W - 14), rnd.randrange(6, H - 14)
+    city = zone(x, y, CITY)
+    if city < 0.3 or rnd.random() > (city - 0.1) ** 0.5:
+        continue
+    w, h = rnd.choice((5, 6, 6, 7, 8)), rnd.choice((5, 6, 6, 7))
+    if blocked(x - 1, y - 1, x + w + 2, y + h + 2):
+        continue
+    house(x, y, w, h, rnd.choice((ROOF_R, ROOF_R, ROOF_O, ROOF_O, ROOF_D)))
+    claim(x - 1, y - 1, x + w + 2, y + h + 2)
+
+
+# ---- trees ----------------------------------------------------------------------------------------------------------
+def tree(cx, cy, r):
+    """A round crown: dark underside, lit upper left, a few highlights."""
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            d = math.hypot(dx, dy)
+            if d <= r + 0.3:
+                lit = (dx + dy) / (2 * r + 0.01)
+                c = LEAF_D if lit > 0.45 else LEAF if lit > 0.0 else LEAF_L
+                if d > r - 0.7 and lit > 0:
+                    c = LEAF_D
+                put(cx + dx, cy + dy, c)
+    for k in range(r):
+        put(cx - r // 2 + (k % 2), cy - r // 2 - 1 + k // 2, LEAF_H if k % 2 == 0 else LEAF_L)
+    put(cx + r // 2, cy + r + 1, (30, 64, 36))
+
+
+trees = []
+for _ in range(60000):
+    x, y = rnd.randrange(4, W - 4), rnd.randrange(4, H - 4)
+    forest, city = zone(x, y, FOREST), zone(x, y, CITY)
+    chance = forest ** 1.1 * 0.8 + (city * 0.08 if 0.3 < city < 0.8 else 0) + (0.012 if city < 0.3 else 0)
+    if rnd.random() > chance:
+        continue
+    r = rnd.choice((3, 3, 4, 4, 5)) if forest > 0.3 else rnd.choice((2, 3, 3))
+    if blocked(x - r, y - r, x + r, y + r + 1):
+        continue
+    trees.append((y, x, r))
+    claim(x - r + 1, y - r + 1, x + r - 1, y + r - 1)
+for y, x, r in sorted(trees):
+    tree(x, y, r)
+
+# ---- boulders and quays ---------------------------------------------------------------------------------------------
+for _ in range(120):
+    x, y = rnd.randrange(8, W - 8), rnd.randrange(8, H - 8)
+    if blocked(x - 2, y - 2, x + 3, y + 2) or zone(x, y, CITY) > 0.5:
+        continue
+    for dy in range(-1, 2):
+        for dx in range(-2, 3):
+            if abs(dx) + abs(dy) <= 2:
+                put(x + dx, y + dy, STONE_L if dx + dy < 0 else STONE if dx + dy == 0 else STONE_D)
+    claim(x - 2, y - 2, x + 3, y + 2)
+# Haydarpasa's piers on the Asian shore
+for k, y0 in enumerate((596, 612, 630)):
+    px0 = int(995 * MAP)
+    py0 = int(y0 * MAP)
+    for dx in range(0, 12 - k * 2):
+        put(px0 - dx, py0, STONE_L)
+        put(px0 - dx, py0 + 1, STONE_D)
+
+# ---- landmarks --------------------------------------------------------------------------------------------------------
+
+
+def minaret(x, y, h):
+    for k in range(h):
+        put(x, y - k, (240, 236, 224))
+    put(x, y - h, (190, 70, 60))
+    put(x, y - h - 1, (190, 70, 60))
+    put(x - 1, y - h // 2, STONE_D)
+    put(x + 1, y - h // 2, STONE_D)
+
+
+def mosque(cx, cy, r, minarets):
+    for dy in range(-r, 2):
+        w = int(math.sqrt(max(0, r * r - dy * dy)))
         for dx in range(-w, w + 1):
-            put(cx + dx, cy + dy, (232, 226, 210) if dy < -dome_r // 2 else (196, 186, 170))
-    for dx in range(-dome_r - 1, dome_r + 2):
-        put(cx + dx, cy + 1, STONE_D)
-    for mx in minarets:
-        for k in range(0, 8):
-            put(cx + mx, cy - k + 1, (236, 232, 220))
-        put(cx + mx, cy - 8, (180, 70, 60))
-        put(cx + mx, cy - 9, (180, 70, 60))
+            put(cx + dx, cy + dy, (208, 214, 226) if dx + dy < -r * 0.4 else (150, 160, 184) if dx + dy > r * 0.4 else (178, 186, 206))
+    for dx in range(-r - 2, r + 3):
+        put(cx + dx, cy + 2, STONE_D)
+        put(cx + dx, cy + 3, DIRT_D)
+    for mx, my in minarets:
+        minaret(cx + mx, cy + my, 11)
+    put(cx, cy - r - 1, GOLD)
 
 
-mosque(176, 150, 4, (-7, 7, -7 + 14, 8))
-mosque(162, 152, 3, (-5, 5))
+mosque(int(640 * MAP), int(420 * MAP), 7, ((-12, 0), (12, 0), (-10, 8), (10, 8)))        # Hagia Sophia
+mosque(int(560 * MAP), int(470 * MAP), 5, ((-9, 0), (9, 0)))                              # the Blue Mosque
+mosque(int(246 * MAP), int(318 * MAP), 4, ((-6, 0),))
+mosque(int(1110 * MAP), int(168 * MAP), 5, ((-8, 0), (8, 0)))                            # Uskudar
 
 
-def tower(cx, base):
-    """Galata Tower: a round stone tower with a balcony and a pointed cap."""
-    for k in range(0, 14):
-        w = 2 if k < 9 else 3
+def maiden_tower():
+    cx, cy = int(KIZ[0]), int(KIZ[1])
+    for dy in range(-6, 1):
+        for dx in range(-2, 3):
+            put(cx + dx, cy + dy, (240, 236, 226) if dx < 1 else (190, 186, 178))
+    for dx in range(-3, 4):
+        put(cx + dx, cy - 3, STONE_D)
+    for k in range(3):
+        for dx in range(-2 + k, 3 - k):
+            put(cx + dx, cy - 7 - k, (184, 70, 56))
+    put(cx, cy - 11, GOLD)
+
+
+maiden_tower()
+
+
+def galata_tower(cx, base):
+    """Galata Tower: a tall round stone tower, a balcony under its pointed cap."""
+    for k in range(0, 21):
+        w = 3 if k < 13 else 4
         for dx in range(-w, w + 1):
-            put(cx + dx, base - k, (214, 200, 176) if dx < 1 else (156, 144, 128))
-    for dx in range(-4, 5):
-        put(cx + dx, base - 9, (120, 108, 96))
-    for k in range(0, 6):
-        for dx in range(-3 + k // 2, 4 - k // 2):
-            put(cx + dx, base - 14 - k, (176, 66, 58) if dx < 1 else (128, 44, 40))
-    put(cx, base - 20, GOLD)
+            put(cx + dx, base - k, (222, 206, 176) if dx < 0 else (188, 168, 140) if dx < w - 1 else (136, 116, 96))
+        if k % 4 == 1:
+            put(cx - 1, base - k, (74, 60, 50))
+    for dx in range(-6, 7):
+        put(cx + dx, base - 13, STONE_D)
+        put(cx + dx, base - 14, (96, 88, 82))
+    for k in range(0, 10):
+        for dx in range(-4 + k // 2, 5 - k // 2):
+            put(cx + dx, base - 21 - k, (190, 74, 60) if dx < 1 else (140, 52, 46))
+    put(cx, base - 31, GOLD)
+    put(cx, base - 32, GOLD)
 
 
-tower(190, 132)
-put(207, 145, WHITE)
-put(208, 145, WHITE)
+GALATA = (int(590 * MAP), int(268 * MAP))
+galata_tower(GALATA[0], GALATA[1])
 
-# ---- lettering (3 x 5 capitals) ------------------------------------------------------------------------------------
+# the Galata Bridge across the Golden Horn's mouth
+for x in range(int(535 * MAP), int(640 * MAP)):
+    t = (x - int(535 * MAP)) / (int(640 * MAP) - int(535 * MAP))
+    y = int((335 - 12 * t) * MAP) + 0
+    if water[y][x] or water[y + 1][x]:
+        put(x, y, STONE_L)
+        put(x, y + 1, STONE_D)
+        put(x, y - 1, (110, 100, 96) if x % 3 == 0 else STONE_L)
+
+# ---- ships ------------------------------------------------------------------------------------------------------------
+ships = []
+for _ in range(900):
+    x, y = rnd.randrange(10, W - 20), rnd.randrange(10, H - 10)
+    if water[y][x] and from_land[y][x] > 9 and all(abs(x - a) + abs(y - b) > 40 for a, b in ships):
+        ships.append((x, y))
+        if len(ships) >= 16:
+            break
+for i, (x, y) in enumerate(ships):
+    big_ship = i % 3 == 0
+    length = 14 if big_ship else 9
+    hull, cabin = ((70, 74, 96), (220, 90, 70)) if big_ship else (WHITE, (60, 90, 140))
+    for dx in range(length):
+        put(x + dx, y, hull)
+        put(x + dx, y - 1, hull)
+        put(x + dx, y + 1, (40, 60, 90))
+    put(x + length, y, hull)
+    for dx in range(2, length - 3):
+        put(x + dx, y - 2, cabin)
+    put(x + length - 4, y - 3, WHITE)
+    for dx in range(-8, 0):                       # a wake
+        if dx % 2:
+            put(x + dx, y, FOAM)
+
+# ---- lettering (3 x 5 capitals) -----------------------------------------------------------------------------------------
 FONT = {
     "A": "010101111101101", "B": "110101110101110", "C": "011100100100011", "D": "110101101101110", "E": "111100110100111",
     "G": "011100101101011", "H": "101101111101101", "I": "111010010010111", "K": "101101110101101", "L": "100100100100111",
     "M": "101111111101101", "N": "110101101101101", "O": "010101101101010", "P": "110101110100100", "R": "110101110101101",
-    "S": "011100010001110", "T": "111010010010010", "U": "101101101101111", "B ": "", " ": "000000000000000",
+    "S": "011100010001110", "T": "111010010010010", "U": "101101101101111", " ": "000000000000000",
 }
 
 
-def text(x, y, s, color, shadow=INK, gap=1):
-    for ch in s:
-        glyph = FONT.get(ch, FONT[" "])
-        for i, bit in enumerate(glyph):
-            if bit == "1":
-                gx, gy = x + i % 3, y + i // 3
-                put(gx + 1, gy + 1, shadow)
-                put(gx, gy, color)
-        x += 3 + gap
+def text_on(x, y, s, color, scale=2, shadow=INK):
+    """`s` in 3 x 5 capitals, `scale` texels a dot, with a drop shadow."""
+    start = x
+    for layer in (shadow, color):
+        x = start
+        off = 1 if layer == shadow else 0
+        for ch in s:
+            glyph = FONT.get(ch, FONT[" "])
+            for i, bit in enumerate(glyph):
+                if bit == "1":
+                    for sy in range(scale):
+                        for sx in range(scale):
+                            put(x + (i % 3) * scale + sx + off, y + (i // 3) * scale + sy + off, layer)
+            x += 4 * scale
 
 
-text(150, 8, "BLACK SEA", (176, 206, 236))
-text(244, 64, "BOSPHORUS", (240, 236, 214))
-text(70, 190, "MARMARA", (176, 214, 232))
-text(112, 104, "GOLDEN HORN", (240, 236, 214))
-text(166, 164, "ISTANBUL", (255, 240, 200))
+text_on(int(1100 * MAP), int(30 * MAP), "BOSPHORUS", (214, 238, 244))
+text_on(int(60 * MAP), int(840 * MAP), "MARMARA", (200, 232, 242))
+text_on(int(430 * MAP), int(205 * MAP), "GOLDEN HORN", (226, 244, 246), 1)
+text_on(int(440 * MAP), int(560 * MAP), "ISTANBUL", WHITE, 2)
 
-# ---- the frame and a compass --------------------------------------------------------------------------------------
+# ---- the frame ------------------------------------------------------------------------------------------------------
 for x in range(W):
-    for k in (0, 1, H - 1, H - 2):
+    for k in (0, 1, 2, H - 1, H - 2, H - 3):
         put(x, k, INK)
-    put(x, 2, SAND)
-    put(x, H - 3, SAND)
+    put(x, 3, SAND)
+    put(x, H - 4, SAND)
 for y in range(H):
-    for k in (0, 1, W - 1, W - 2):
+    for k in (0, 1, 2, W - 1, W - 2, W - 3):
         put(k, y, INK)
-    put(2, y, SAND)
-    put(W - 3, y, SAND)
-cx, cy = 356, 190
-for k in range(-8, 9):
-    put(cx, cy + k, INK)
-    put(cx + k, cy, INK)
-for k in range(1, 7):
-    put(cx, cy - k, WHITE)
-put(cx - 1, cy - 8, WHITE)
-put(cx + 1, cy - 8, WHITE)
-put(cx, cy - 9, WHITE)
-text(cx - 1, cy - 16, "N" if False else "N", WHITE)
+    put(3, y, SAND)
+    put(W - 4, y, SAND)
 
 OUT.mkdir(parents=True, exist_ok=True)
 img.save(OUT / "the_city.png")
@@ -330,43 +458,39 @@ def mist():
     soon = Image.new("RGB", (W, H))
     sp = soon.load()
     r = random.Random(5)
-    n1, n2 = make_noise(31, 46), make_noise(44, 17)
+    n1, n2 = make_noise(31, 70), make_noise(44, 24)
     tones = [(18, 20, 36), (26, 30, 52), (38, 44, 72), (58, 66, 98), (92, 102, 132)]
     for y in range(H):
         for x in range(W):
-            v = n1(x, y) * 0.65 + n2(x, y) * 0.35 + (0.15 if abs(y - H / 2) < 40 else 0) * (1 - abs(y - H / 2) / 40)
+            v = n1(x, y) * 0.65 + n2(x, y) * 0.35 + (0.15 if abs(y - H / 2) < 60 else 0) * (1 - abs(y - H / 2) / 60)
             level = min(4, int(v * 5.2))
             if dither(v * 5.2 - level, x, y) and level < 4:
                 level += 1
             sp[x, y] = tones[max(0, level - 1)]
-    for _ in range(90):
-        x, y = r.randrange(W), r.randrange(H)
-        sp[x, y] = (200, 206, 230)
-    # a question mark, big
+    for _ in range(140):
+        sp[r.randrange(W), r.randrange(H)] = (200, 206, 230)
     glyph = ["01110", "11011", "00011", "00110", "01100", "00000", "01100"]
-    scale = 9
-    ox, oy = W // 2 - 5 * scale // 2, H // 2 - 7 * scale // 2 - 6
+    scale = 13
+    ox, oy = W // 2 - 5 * scale // 2, H // 2 - 7 * scale // 2 - 8
     for gy, row in enumerate(glyph):
         for gx, bit in enumerate(row):
             if bit == "1":
                 for yy in range(scale):
                     for xx in range(scale):
-                        X, Y = ox + gx * scale + xx, oy + gy * scale + yy
-                        sp[X + 2, Y + 2] = INK
+                        sp[ox + gx * scale + xx + 3, oy + gy * scale + yy + 3] = INK
                 for yy in range(scale):
                     for xx in range(scale):
-                        X, Y = ox + gx * scale + xx, oy + gy * scale + yy
-                        sp[X, Y] = (236, 232, 214) if yy < scale - 2 and xx < scale - 2 else (170, 166, 150)
+                        sp[ox + gx * scale + xx, oy + gy * scale + yy] = (236, 232, 214) if yy < scale - 3 and xx < scale - 3 else (170, 166, 150)
     for x in range(W):
-        for k in (0, 1, H - 1, H - 2):
+        for k in (0, 1, 2, H - 1, H - 2, H - 3):
             sp[x, k] = INK
-        sp[x, 2] = (110, 116, 150)
-        sp[x, H - 3] = (110, 116, 150)
+        sp[x, 3] = (110, 116, 150)
+        sp[x, H - 4] = (110, 116, 150)
     for y in range(H):
-        for k in (0, 1, W - 1, W - 2):
+        for k in (0, 1, 2, W - 1, W - 2, W - 3):
             sp[k, y] = INK
-        sp[2, y] = (110, 116, 150)
-        sp[W - 3, y] = (110, 116, 150)
+        sp[3, y] = (110, 116, 150)
+        sp[W - 4, y] = (110, 116, 150)
     return soon
 
 
@@ -374,7 +498,7 @@ mist().save(OUT / "soon.png")
 
 
 # ---- the level circles (28 x 28) ----------------------------------------------------------------------------------
-def disc(size, ring, fill, ring_w=3, mark=None, spikes=False, glow=None):
+def disc(size, ring, fill, ring_w=3, mark=None, spikes=False):
     im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     p = im.load()
     c = (size - 1) / 2
@@ -382,13 +506,13 @@ def disc(size, ring, fill, ring_w=3, mark=None, spikes=False, glow=None):
         for x in range(size):
             d = math.hypot(x - c, y - c)
             r_out = size / 2 - 2
-            if d <= r_out + 1 and d > r_out:
+            if r_out < d <= r_out + 1:
                 p[x, y] = INK + (255,)
-            elif d <= r_out and d > r_out - ring_w:
+            elif r_out - ring_w < d <= r_out:
                 p[x, y] = ring + (255,) if (x + y) % 7 else tuple(min(255, v + 30) for v in ring) + (255,)
-            elif d <= r_out - ring_w and d > r_out - ring_w - 1:
+            elif r_out - ring_w - 1 < d <= r_out - ring_w:
                 p[x, y] = INK + (255,)
-            elif d <= r_out - ring_w - 1:
+            elif d <= r_out - ring_w - 1 and fill is not None:
                 p[x, y] = fill + (255,)
     if spikes:
         for k in range(5):
@@ -427,14 +551,15 @@ def lock(c):
 disc(28, (255, 200, 70), (60, 40, 20)).save(OUT / "node_open.png")
 disc(28, (92, 200, 110), (24, 70, 40), mark=check).save(OUT / "node_done.png")
 disc(28, (120, 120, 134), (40, 40, 52), mark=lock).save(OUT / "node_locked.png")
-disc(32, (255, 214, 92), (110, 30, 30), ring_w=4, spikes=True).save(OUT / "node_boss.png")
+# the last level's ring is hollow, so Galata Tower shows through it
+disc(36, (255, 214, 92), None, ring_w=4, spikes=True).save(OUT / "node_boss.png")
 for i in range(2):
-    ring = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    ring = Image.new("RGBA", (44, 44), (0, 0, 0, 0))
     p = ring.load()
-    for y in range(40):
-        for x in range(40):
-            d = math.hypot(x - 19.5, y - 19.5)
-            r = 17 + i
+    for y in range(44):
+        for x in range(44):
+            d = math.hypot(x - 21.5, y - 21.5)
+            r = 19 + i
             if r - 1 <= d <= r + 0.6:
                 p[x, y] = (255, 255, 255, 255) if (x + y + i) % 4 < 2 else (255, 214, 92, 255)
     ring.save(OUT / f"node_select_{i}.png")

@@ -1,7 +1,7 @@
-// The campaign. A map is a picture (384 x 216) with the circles of its levels on it; a level is a fight against a fixed
-// rival on a stage. Stage and rival are names from assets/stages and assets/characters. Levels unlock in the order listed.
-// `at` is where the circle goes, in pixels of the picture from its top left. The pictures come from
-// `python tools/gen_city_map.py`.
+// The campaign. A map is a picture (576 x 324, shown 384 x 216 units wide) with the circles of its levels on it; a level is
+// a fight against a fixed rival on a stage. Stage and rival are names from assets/stages and assets/characters. Levels
+// unlock in the order listed. `at` is where the circle goes, in those units from the picture's top left. The pictures come
+// from `python tools/gen_city_map.py`.
 (
     maps: [
         (
@@ -9,11 +9,11 @@
             name: "The City",
             image: "ui/campaign/the_city.png",
             levels: [
-                (name: "Istanbul Courtyard", at: (44, 120), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
-                (name: "Level 2", at: (92, 82), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
-                (name: "Level 3", at: (150, 62), stage: "Istanbul Courtyard", rival: "Junkhead", difficulty: 3),
-                (name: "Level 4", at: (262, 98), stage: "Istanbul Courtyard", rival: "Gray Persona", difficulty: 4),
-                (name: "Galata Tower", at: (190, 126), stage: "Galata Tower", rival: "Goblin King", difficulty: 5, boss: true),
+                (name: "Istanbul Courtyard", at: (30, 40), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
+                (name: "Level 2", at: (80, 82), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
+                (name: "Level 3", at: (123, 80), stage: "Istanbul Courtyard", rival: "Junkhead", difficulty: 3),
+                (name: "Level 4", at: (213, 46), stage: "Istanbul Courtyard", rival: "Gray Persona", difficulty: 4),
+                (name: "Galata Tower", at: (113, 42), stage: "Galata Tower", rival: "Goblin King", difficulty: 5, boss: true),
             ],
         ),
         (

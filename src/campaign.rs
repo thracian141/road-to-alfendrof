@@ -14,7 +14,7 @@ pub struct MapData {
     pub id: String,
     /// Shown as the map's title.
     pub name: String,
-    /// The picture, 384 x 216 (path under `assets/`).
+    /// The picture (path under `assets/`), 576 x 324, shown 384 x 216 units wide.
     pub image: String,
     /// Levels in the order they are played; none on a map that is only a preview.
     #[serde(default)]
@@ -24,7 +24,7 @@ pub struct MapData {
 #[derive(Clone, Debug, Deserialize)]
 pub struct LevelData {
     pub name: String,
-    /// Where its circle is, in pixels of the map picture (from the top left).
+    /// Where its circle is, in map units (384 x 216) from the picture's top left.
     pub at: (i32, i32),
     /// A stage's name (see `assets/stages`).
     pub stage: String,
