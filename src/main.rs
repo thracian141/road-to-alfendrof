@@ -14,6 +14,7 @@ macro_rules! set_ne {
 }
 
 mod briefing;
+mod campaign_map;
 mod vulkan;
 mod menus;
 mod music;
@@ -67,6 +68,8 @@ pub enum AppState {
     #[default]
     Title,
     CharSelect,
+    /// The campaign's maps.
+    Campaign,
     StageSelect,
     Online,
     Social,
@@ -412,6 +415,7 @@ fn main() {
         .add_plugins(settings::SettingsPlugin)
         .add_plugins(sfx::SfxPlugin)
         .add_plugins(menus::MenuPlugin)
+        .add_plugins(campaign_map::CampaignPlugin)
         .add_plugins(music::MusicPlugin)
         .add_plugins(update::UpdatePlugin)
         .add_plugins(online::OnlinePlugin)
@@ -463,7 +467,7 @@ fn main() {
         .add_systems(Update, render::animate_zones.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (toggle_debug, dev_screenshot));
 
-    if let Some(state) = dev.preview.as_deref().and_then(|s| match s { "social" => Some(AppState::Social), "options" => Some(AppState::Options), "controls" => Some(AppState::Controls), "stages" => Some(AppState::StageSelect), _ => None }) {
+    if let Some(state) = dev.preview.as_deref().and_then(|s| match s { "social" => Some(AppState::Social), "options" => Some(AppState::Options), "controls" => Some(AppState::Controls), "stages" => Some(AppState::StageSelect), "campaign" => Some(AppState::Campaign), _ => None }) {
         app.insert_state(state);
     } else if dev.fight {
         // keep a bad index from crashing
@@ -737,7 +741,7 @@ fn step_sim(
     ready_press: ResMut<briefing::ReadyPress>,
     mut brain: Local<Brain>,
     mut commands: Commands,
-    (pause, mut surrender): (Res<menus::Pause>, ResMut<menus::Surrendering>),
+    (pause, mut surrender, campaign, maps): (Res<menus::Pause>, ResMut<menus::Surrendering>, Res<campaign_map::Campaign>, Res<campaign_map::Maps>),
 ) {
     if *mode == Mode::LocalTeams {
         if sim.0.phase == Phase::MatchOver { surrender.0 = false; }
@@ -793,6 +797,7 @@ fn step_sim(
     if paused && !surrender.0 {
         return;
     }
+    brain.set_difficulty(campaign_map::difficulty(&campaign, &maps));
     let mut cpu = brain.input(&sim.0, 1, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
     if briefing {
         cpu.0 |= Input::READY;
@@ -944,6 +949,7 @@ fn sync_hud(
     mut banner: Single<&mut Text2d, (With<BannerText>, Without<TimerText>, Without<SubBannerText>)>,
     mut sub_banner: Single<&mut Text2d, (With<SubBannerText>, Without<TimerText>, Without<BannerText>)>,
     net: Option<Res<online::NetSession>>,
+    (campaign, mode): (Res<campaign_map::Campaign>, Res<Mode>),
 ) {
     let s = &sim.0;
     // online, a match whose connection is not up does not advance: say so (otherwise it sits on 3)
@@ -1008,7 +1014,7 @@ fn sync_hud(
     }
     let new_sub = match s.phase {
         _ if waiting => "Waiting for the other players...".to_string(),
-        Phase::MatchOver => "Enter: rematch    Esc: menu".to_string(),
+        Phase::MatchOver => campaign_map::banner_line(&campaign, *mode).unwrap_or("Enter: rematch    Esc: menu").to_string(),
         Phase::Countdown(_) => format!("Round {}", s.round),
         _ => String::new(),
     };
@@ -1047,6 +1053,7 @@ fn restart_match(
     roster: Res<Roster>,
     sel: Res<Selection>,
     mode: Res<Mode>,
+    campaign: Res<campaign_map::Campaign>,
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
     mut was_over: Local<bool>,
@@ -1060,6 +1067,9 @@ fn restart_match(
             // online, a rematch means inviting again
             commands.remove_resource::<online::NetSession>();
             next.set(AppState::Social);
+        } else if campaign.active.is_some() && campaign.won == Some(true) {
+            // a level won: back to the map, where the next one is open
+            next.set(AppState::Campaign);
         } else {
             *sim = fresh_sim(&roster, &sel, *mode, false);
         }
@@ -1082,10 +1092,10 @@ fn fresh_sim(roster: &Roster, sel: &Selection, mode: Mode, briefing: bool) -> Si
 }
 
 /// Esc leaves a fight that is over (or not begun); in one that is on it opens the pause menu (see `menus::Pause`).
-fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
+fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, campaign: Res<campaign_map::Campaign>, mut next: ResMut<NextState<AppState>>, mut commands: Commands) {
     if keys.0.just_pressed(KeyCode::Escape) && !pause.open() && matches!(sim.0.phase, Phase::MatchOver | Phase::Briefing(_)) {
         commands.remove_resource::<online::NetSession>();
-        next.set(AppState::Title);
+        next.set(if campaign.active.is_some() { AppState::Campaign } else { AppState::Title });
     }
 }
 
@@ -1104,7 +1114,7 @@ mod controller_tests {
         let mut input = MenuInput::default();
         input.0.press(KeyCode::Enter);
         app.insert_resource(sim).insert_resource(Roster(vec![data]))
-            .insert_resource(Selection::default()).insert_resource(Mode::LocalTeams)
+            .insert_resource(Selection::default()).insert_resource(Mode::LocalTeams).init_resource::<campaign_map::Campaign>()
             .insert_resource(input).init_resource::<NextState<AppState>>()
             .add_systems(Update, restart_match);
         app.update();

@@ -40,7 +40,7 @@ impl Plugin for MenuPlugin {
                     sync_pause.run_if(in_state(AppState::Fight)).after(pause_main).after(options_confirm).after(controls_confirm),
                     adopt_overlay.after(sync_pause),
                     // (menus only: during a fight there is nothing for them to do)
-                    menu_nav.run_if(menu_live).run_if(not(in_state(AppState::CharSelect))),
+                    menu_nav.run_if(menu_live).run_if(not(in_state(AppState::CharSelect))).run_if(not(in_state(AppState::Campaign))),
                     carousel_nav.run_if(in_state(AppState::CharSelect)),
                     menu_click.run_if(menu_live).run_if(not(in_state(AppState::Online))),
                     menu_labels.run_if(menu_live),
@@ -215,6 +215,13 @@ pub fn panel_parts() -> Vec<(Sprite, Vec3)> {
     parts
 }
 
+/// A framed box of any size, centred on `at`.
+pub(crate) fn spawn_panel_sized(commands: &mut Commands, state: AppState, size: Vec2, at: Vec2) {
+    let (frame, fill) = (Color::srgb(0.55, 0.42, 0.85), Color::srgba(0.03, 0.02, 0.08, 0.9));
+    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(frame, size), Transform::from_xyz(at.x, at.y, 7.0)));
+    commands.spawn((DespawnOnExit(state), Sprite::from_color(fill, size - Vec2::splat(4.0)), Transform::from_xyz(at.x, at.y, 7.1)));
+}
+
 pub fn spawn_panel(commands: &mut Commands, state: AppState) {
     for (mut sprite, at) in panel_parts() {
         if state == AppState::Overlay && at.z == 1.0 { sprite.color = sprite.color.with_alpha(1.0); }
@@ -372,10 +379,9 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     commands.entity(version).insert((Transform::from_xyz(172.0, 96.0, 5.0), bevy::sprite::Anchor::CENTER_RIGHT));
 
     let white = Color::WHITE;
-    let soon = Color::srgb(0.5, 0.5, 0.6);
     let (items, back) = match *page {
         TitlePage::Main => (vec![Item::new("Singleplayer", white), Item::new("Multiplayer", white), Item::new("Options", white)], "Quit"),
-        TitlePage::Singleplayer => (vec![Item::new("Train", white), Item::new("Campaign (soon)", soon)], "Back"),
+        TitlePage::Singleplayer => (vec![Item::new("Train", white), Item::new("Campaign", white)], "Back"),
         TitlePage::Multiplayer => (vec![Item::new("Lobbies", white), Item::new("Direct", white), Item::new("Same device", white)], "Back"),
         TitlePage::SameDevice => (vec![Item::new("2 players", white), Item::new("2v2 - 4 players", white)], "Back"),
     };
@@ -761,6 +767,7 @@ fn title_confirm(
     menu: Res<Menu>,
     mut page: ResMut<TitlePage>,
     mut mode: ResMut<Mode>,
+    mut campaign: ResMut<crate::campaign_map::Campaign>,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -791,8 +798,11 @@ fn title_confirm(
                 *mode = Mode::VsCpu;
                 go(AppState::CharSelect);
             }
-            // the campaign isn't there yet
-            (TitlePage::Singleplayer, _) => {}
+            (TitlePage::Singleplayer, _) => {
+                *mode = Mode::VsCpu;
+                campaign.picking = true;
+                go(AppState::CharSelect);
+            }
             (TitlePage::Multiplayer, 0) => {
                 *mode = Mode::Online;
                 go(AppState::Social);
@@ -829,6 +839,7 @@ fn char_confirm(
     mut lobby: ResMut<crate::online::OnlineLobby>,
     mut info: ResMut<crate::online::OnlineInfo>,
     mut social: ResMut<crate::social::Social>,
+    mut campaign: ResMut<crate::campaign_map::Campaign>,
 ) {
     if *mode == Mode::Online && social.in_room() {
         if back_pressed(&keys.0) { social.leave(); info.locked=false; next.set(AppState::Social); }
@@ -861,7 +872,11 @@ fn char_confirm(
         }
     } else if confirm_pressed(&keys.0) {
         sel.chars[picking.0] = menu.cursor;
-        if picking.0 + 1 < if *mode == Mode::LocalTeams { 4 } else { 2 } {
+        if campaign.picking {
+            // the campaign takes one pick; the rivals and stages come with the levels
+            campaign.player = menu.cursor;
+            next.set(AppState::Campaign);
+        } else if picking.0 + 1 < if *mode == Mode::LocalTeams { 4 } else { 2 } {
             picking.0 += 1;
             header.0 = pick_title(picking.0, *mode);
             menu.cursor = 0;

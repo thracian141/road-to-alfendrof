@@ -141,247 +141,407 @@ for y in range(H):
             c = LIGHT
         px[x, y] = c
 
-# ---- land ground ---------------------------------------------------------------------------------------------------
-for y in range(H):
-    for x in range(W):
-        if water[y][x]:
-            continue
-        d = from_water[y][x]
-        city = zone(x, y, CITY)
-        n = mid(x, y) * 0.6 + fine(x, y) * 0.4
-        if d <= 1:
-            c = SAND if fine(x, y) > 0.35 else DIRT
-        elif d == 2:
-            c = STONE if (x + y) % 2 else STONE_L
-        elif city > 0.4:
-            c = DIRT if dither(0.55 + (n - 0.5), x, y) else DIRT_D
-        else:
-            c = GRASS if n > 0.42 else GRASS_D
-            if fine(x, y) > 0.72 and dither(0.5, x, y):
-                c = GRASS_L
-            if big(x + 100, y) > 0.62 and dither(0.4, x, y):
-                c = MEADOW
-        px[x, y] = c
-
-
+# ---- the city, seen from above: blocks of roofs with streets between them --------------------------------------------------
 def put(x, y, c):
     if 0 <= x < W and 0 <= y < H:
         px[x, y] = c
 
 
+def shade(c, k):
+    return tuple(max(0, min(255, int(v * k))) for v in c)
+
+
+TERRACOTTA = [(196, 84, 58), (212, 112, 70), (178, 70, 52), (224, 136, 88), (204, 98, 64)]
+CONCRETE = [(214, 200, 176), (230, 216, 190), (190, 178, 160), (240, 230, 206), (204, 190, 168)]
+ROOF_BLUE = [(120, 150, 146), (140, 168, 160)]
+STREET, STREET_L = (140, 126, 114), (164, 150, 134)
+PARK_G, PARK_L, PARK_D = (96, 154, 70), (132, 186, 84), (68, 128, 58)
+PLAZA = (216, 200, 164)
+
+# how old the roofs are, by district, in street-map pixels: (x, y, half width, half height, share of terracotta roofs)
+OLD = [(470, 420, 340, 200, 0.85), (640, 200, 280, 260, 0.6), (1110, 250, 260, 220, 0.5), (190, 300, 280, 260, 0.45),
+       (1290, 800, 330, 220, 0.3)]
+PARKS = [(700, 395, 70, 45), (880, 8, 120, 90), (1180, 985, 110, 62), (1450, 330, 230, 150), (80, 60, 170, 110), (1640, 450, 120, 80),
+         (610, 560, 60, 30), (1720, 130, 180, 80)]
+
+
+def terracotta_share(x, y):
+    sx, sy = x / MAP, y / MAP
+    best = 0.3
+    for cx, cy, rx, ry, k in OLD:
+        best = max(best, (1 - math.hypot((sx - cx) / rx, (sy - cy) / ry)) * k + 0.1)
+    return best + (mid(x, y) - 0.5) * 0.5
+
+
+def park_amount(x, y):
+    sx, sy = x / MAP, y / MAP
+    s = 0.0
+    for cx, cy, rx, ry in PARKS:
+        s = max(s, 1 - math.hypot((sx - cx) / rx, (sy - cy) / ry))
+    return s + (mid(x, y) - 0.5) * 0.4
+
+
+# a seed for each block of buildings; a block gets the direction of the nearest shore, so the streets follow the coast
+CELL = 13
+seeds = {}
+for gy in range(-1, H // CELL + 2):
+    for gx in range(-1, W // CELL + 2):
+        for _ in range(rnd.choice((1, 2, 2, 3))):
+            seeds.setdefault((gx, gy), []).append((gx * CELL + rnd.random() * CELL, gy * CELL + rnd.random() * CELL))
+
+
+def shore_angle(x, y):
+    xi, yi = max(1, min(W - 2, int(x))), max(1, min(H - 2, int(y)))
+    gx = from_water[yi][min(W - 1, xi + 3)] - from_water[yi][max(0, xi - 3)]
+    gy = from_water[min(H - 1, yi + 3)][xi] - from_water[max(0, yi - 3)][xi]
+    return math.atan2(gy, gx) + math.pi / 2
+
+
+blocks = {}
+for cell_key, pts in seeds.items():
+    for i, (sx, sy) in enumerate(pts):
+        xi, yi = int(max(0, min(W - 1, sx))), int(max(0, min(H - 1, sy)))
+        near_shore = from_water[yi][xi] < 22
+        angle = shore_angle(sx, sy) if near_shore else mid(sx, sy) * 3.0 + rnd.random() * 0.4
+        angle += rnd.choice((0, 0, 0.12, -0.12))
+        is_park = park_amount(sx, sy) > 0.35 and rnd.random() < 0.92
+        old = rnd.random() < terracotta_share(sx, sy)
+        blocks[(cell_key, i)] = {
+            "angle": angle,
+            "park": is_park,
+            "old": old,
+            "cw": rnd.choice((3, 3, 4)) if old else rnd.choice((4, 4, 5, 6)),
+            "ch": rnd.choice((3, 4, 4)) if old else rnd.choice((4, 5, 6)),
+            "seed": rnd.randrange(1 << 20),
+        }
+
+for y in range(H):
+    for x in range(W):
+        if water[y][x]:
+            continue
+        gx, gy = x // CELL, y // CELL
+        best = second = (1e9, None)
+        for cy in range(gy - 1, gy + 2):
+            for cx in range(gx - 1, gx + 2):
+                for i, (sx, sy) in enumerate(seeds.get((cx, cy), ())):
+                    d = (x - sx) ** 2 + (y - sy) ** 2
+                    if d < best[0]:
+                        second, best = best, (d, ((cx, cy), i))
+                    elif d < second[0]:
+                        second = (d, ((cx, cy), i))
+        d1, d2 = math.sqrt(best[0]), math.sqrt(second[0])
+        block = blocks[best[1]]
+        water_d = from_water[y][x]
+        if water_d <= 1:
+            px[x, y] = SAND if fine(x, y) > 0.4 else DIRT
+        elif water_d == 2:
+            px[x, y] = STONE_L if (x + y) % 2 else STONE
+        elif water_d == 3:
+            px[x, y] = STREET_L if (x // 3) % 2 else STREET
+        elif d2 - d1 < 1.0 + (0.5 if block["old"] else 0.0):
+            px[x, y] = STREET if (x + y) % 5 else STREET_L
+        elif block["park"]:
+            n = fine(x, y)
+            c = PARK_L if n > 0.62 else PARK_G if n > 0.34 else PARK_D
+            sx, sy = seeds[best[1][0]][best[1][1]]
+            # a sand path winding through, and a pond in the middle of the bigger parks
+            if abs(((x - sx) * 0.7 + (y - sy) * 0.7 + 4 * math.sin((y - sy) / 3.0)) % 14 - 7) < 0.7:
+                c = SAND
+            px[x, y] = c
+        else:
+            sx, sy = seeds[best[1][0]][best[1][1]]
+            a = block["angle"]
+            u = (x - sx) * math.cos(a) + (y - sy) * math.sin(a) + 100
+            v = -(x - sx) * math.sin(a) + (y - sy) * math.cos(a) + 100
+            cw, ch = block["cw"], block["ch"]
+            ci, cj = int(u // cw), int(v // ch)
+            h = (ci * 73856093 ^ cj * 19349663 ^ block["seed"]) & 0xFFFF
+            pal = TERRACOTTA if block["old"] else (ROOF_BLUE if h % 11 == 0 else CONCRETE)
+            roof = shade(pal[h % len(pal)], 0.92 + (h >> 4) % 17 / 100)
+            iu, iv = u - ci * cw, v - cj * ch
+            if iu >= cw - 1 or iv >= ch - 1:
+                roof = shade(roof, 0.62)                    # the shadow side of the building
+            elif iu < 1 and iv < 1:
+                roof = shade(roof, 1.1)
+            px[x, y] = roof
+
 occ = [[False] * W for _ in range(H)]
 
 
-def blocked(x0, y0, x1, y1):
-    for y in range(max(0, y0), min(H, y1 + 1)):
-        for x in range(max(0, x0), min(W, x1 + 1)):
-            if occ[y][x] or water[y][x] or from_water[y][x] <= 2:
-                return True
-    return False
-
-
-def claim(x0, y0, x1, y1):
-    for y in range(max(0, y0), min(H, y1 + 1)):
-        for x in range(max(0, x0), min(W, x1 + 1)):
-            occ[y][x] = True
-
-
-# ---- fields (a patchwork, away from the city) ---------------------------------------------------------------------
-for cx, cy, fw, fh, vertical in [(1650, 950, 300, 190, False), (1880, 830, 250, 150, True), (150, 90, 220, 140, False),
-                                  (1560, 560, 200, 120, True), (1960, 990, 160, 120, False), (420, 120, 150, 100, True)]:
-    x0, y0 = int((cx - fw / 2) * MAP), int((cy - fh / 2) * MAP)
-    x1, y1 = int((cx + fw / 2) * MAP), int((cy + fh / 2) * MAP)
-    if any(not (0 <= x < W and 0 <= y < H) or water[y][x] for x in (x0, x1) for y in (y0, y1)):
-        continue
-    if zone((x0 + x1) / 2, (y0 + y1) / 2, CITY) > 0.5:
-        continue
+def plaza(x0, y0, x1, y1, colour=PLAZA):
+    """Clear a rectangle to bare ground (a landmark's grounds)."""
     for y in range(y0, y1 + 1):
         for x in range(x0, x1 + 1):
-            if water[y][x]:
-                continue
-            stripe = ((x if vertical else y) // 3) % 2
-            colour = (FIELD_Y if (x0 // 40 + y0 // 40) % 2 else FIELD_G) if stripe else FIELD_L
-            if x in (x0, x1) or y in (y0, y1):
-                colour = GRASS_D
-            px[x, y] = colour
-    claim(x0, y0, x1, y1)
-
-# ---- roads: tan lanes between the town centres --------------------------------------------------------------------
-TOWNS = [(480, 430), (640, 200), (330, 300), (1100, 240), (1260, 800), (1000, 560), (1500, 700), (1750, 500), (1850, 160), (520, 160)]
-for i, (ax, ay) in enumerate(TOWNS):
-    for bx, by in TOWNS[i + 1:]:
-        if math.hypot(ax - bx, ay - by) > 700:
-            continue
-        steps = int(math.hypot(ax - bx, ay - by) * MAP)
-        wobble = rnd.random() * 6
-        for k in range(steps):
-            t = k / steps
-            x = (ax + (bx - ax) * t) * MAP + math.sin(t * 9 + wobble) * 2.5
-            y = (ay + (by - ay) * t) * MAP + math.cos(t * 7 + wobble) * 2.5
-            ix, iy = int(x), int(y)
-            if 0 <= ix < W - 1 and 0 <= iy < H - 1 and not water[iy][ix] and from_water[iy][ix] > 2 and zone(ix, iy, CITY) < 0.6:
-                put(ix, iy, DIRT)
-                put(ix + 1, iy, DIRT_D)
-
-# ---- houses ---------------------------------------------------------------------------------------------------------
+            if 0 <= x < W and 0 <= y < H and not water[y][x] and from_water[y][x] > 2:
+                px[x, y] = colour if (x + y) % 9 else shade(colour, 0.94)
 
 
-def house(x, y, w, h, roof):
-    """A house: a roof with a lit left slope over a cream wall, shadow to the right and below."""
-    rh = 3 if h < 6 else 4
-    for dy in range(rh):
-        for dx in range(-dy // 2, w + dy // 2 + 1):
-            c = roof if dx < w * 0.55 else ROOF_D
-            if dy == 0:
-                c = (255, 168, 120) if roof == ROOF_O else (236, 110, 84)
-            put(x + dx, y + dy, c)
-    for dy in range(rh, h):
-        for dx in range(w + 1):
-            put(x + dx, y + dy, WALL if dx < w - 1 else WALL_D)
-    put(x + w // 2, y + h - 1, (96, 64, 48))
-    for dx in range(w + 2):
-        put(x + dx + 1, y + h, DIRT_D)
-    put(x + w + 1, y + rh, DIRT_D)
-
-
-for _ in range(26000):
-    x, y = rnd.randrange(6, W - 14), rnd.randrange(6, H - 14)
-    city = zone(x, y, CITY)
-    if city < 0.3 or rnd.random() > (city - 0.1) ** 0.5:
-        continue
-    w, h = rnd.choice((5, 6, 6, 7, 8)), rnd.choice((5, 6, 6, 7))
-    if blocked(x - 1, y - 1, x + w + 2, y + h + 2):
-        continue
-    house(x, y, w, h, rnd.choice((ROOF_R, ROOF_R, ROOF_O, ROOF_O, ROOF_D)))
-    claim(x - 1, y - 1, x + w + 2, y + h + 2)
-
-
-# ---- trees ----------------------------------------------------------------------------------------------------------
-def tree(cx, cy, r):
-    """A round crown: dark underside, lit upper left, a few highlights."""
+def disc_shaded(cx, cy, r, base, light, dark):
+    """A dome seen from above and a little from the south: lit from the upper left."""
     for dy in range(-r, r + 1):
         for dx in range(-r, r + 1):
             d = math.hypot(dx, dy)
-            if d <= r + 0.3:
-                lit = (dx + dy) / (2 * r + 0.01)
-                c = LEAF_D if lit > 0.45 else LEAF if lit > 0.0 else LEAF_L
-                if d > r - 0.7 and lit > 0:
-                    c = LEAF_D
+            if d <= r + 0.2:
+                t = (dx + dy) / (2 * r + 0.01)
+                c = light if t < -0.25 else dark if t > 0.35 else base
+                if d > r - 0.8 and t > 0.1:
+                    c = shade(dark, 0.8)
                 put(cx + dx, cy + dy, c)
-    for k in range(r):
-        put(cx - r // 2 + (k % 2), cy - r // 2 - 1 + k // 2, LEAF_H if k % 2 == 0 else LEAF_L)
-    put(cx + r // 2, cy + r + 1, (30, 64, 36))
+    put(cx - r // 3, cy - r // 3, shade(light, 1.15))
 
 
-trees = []
-for _ in range(60000):
-    x, y = rnd.randrange(4, W - 4), rnd.randrange(4, H - 4)
-    forest, city = zone(x, y, FOREST), zone(x, y, CITY)
-    chance = forest ** 1.1 * 0.8 + (city * 0.08 if 0.3 < city < 0.8 else 0) + (0.012 if city < 0.3 else 0)
-    if rnd.random() > chance:
-        continue
-    r = rnd.choice((3, 3, 4, 4, 5)) if forest > 0.3 else rnd.choice((2, 3, 3))
-    if blocked(x - r, y - r, x + r, y + r + 1):
-        continue
-    trees.append((y, x, r))
-    claim(x - r + 1, y - r + 1, x + r - 1, y + r - 1)
-for y, x, r in sorted(trees):
-    tree(x, y, r)
-
-# ---- boulders and quays ---------------------------------------------------------------------------------------------
-for _ in range(120):
-    x, y = rnd.randrange(8, W - 8), rnd.randrange(8, H - 8)
-    if blocked(x - 2, y - 2, x + 3, y + 2) or zone(x, y, CITY) > 0.5:
-        continue
-    for dy in range(-1, 2):
-        for dx in range(-2, 3):
-            if abs(dx) + abs(dy) <= 2:
-                put(x + dx, y + dy, STONE_L if dx + dy < 0 else STONE if dx + dy == 0 else STONE_D)
-    claim(x - 2, y - 2, x + 3, y + 2)
-# Haydarpasa's piers on the Asian shore
-for k, y0 in enumerate((596, 612, 630)):
-    px0 = int(995 * MAP)
-    py0 = int(y0 * MAP)
-    for dx in range(0, 12 - k * 2):
-        put(px0 - dx, py0, STONE_L)
-        put(px0 - dx, py0 + 1, STONE_D)
-
-# ---- landmarks --------------------------------------------------------------------------------------------------------
+LEAD = ((146, 156, 176), (196, 204, 220), (96, 108, 130))        # the grey blue of an old dome: base, light, dark
+GOLD_C = (255, 214, 92)
 
 
-def minaret(x, y, h):
-    for k in range(h):
-        put(x, y - k, (240, 236, 224))
-    put(x, y - h, (190, 70, 60))
-    put(x, y - h - 1, (190, 70, 60))
-    put(x - 1, y - h // 2, STONE_D)
-    put(x + 1, y - h // 2, STONE_D)
+def minaret(x, y, height):
+    """A slender minaret: a white shaft with a balcony and a pointed grey cap, throwing a shadow to the right."""
+    for k in range(height):
+        put(x, y - k, (244, 240, 230))
+        put(x + 1, y - k + 1, (150, 140, 130))
+    for dx in (-1, 0, 1):
+        put(x + dx, y - height * 2 // 3, (200, 194, 184))
+    put(x, y - height, (92, 98, 112))
+    put(x, y - height - 1, (92, 98, 112))
+    put(x, y - height - 2, GOLD_C)
 
 
-def mosque(cx, cy, r, minarets):
-    for dy in range(-r, 2):
-        w = int(math.sqrt(max(0, r * r - dy * dy)))
-        for dx in range(-w, w + 1):
-            put(cx + dx, cy + dy, (208, 214, 226) if dx + dy < -r * 0.4 else (150, 160, 184) if dx + dy > r * 0.4 else (178, 186, 206))
-    for dx in range(-r - 2, r + 3):
-        put(cx + dx, cy + 2, STONE_D)
-        put(cx + dx, cy + 3, DIRT_D)
-    for mx, my in minarets:
-        minaret(cx + mx, cy + my, 11)
-    put(cx, cy - r - 1, GOLD)
+def mosque(cx, cy, scale=1.0, minarets=4, court=True):
+    """A classical Ottoman mosque: a big central dome with half domes around it, corner domelets, a forecourt and minarets."""
+    r = int(5 * scale)
+    plaza(cx - r - 8, cy - r - 5, cx + r + 8, cy + r + (9 if court else 5))
+    for dy in range(-r - 2, r + 3):
+        for dx in range(-r - 2, r + 3):
+            put(cx + dx, cy + dy, (226, 206, 176) if dx + dy < 0 else (190, 166, 134))
+    for ox, oy in ((-r, 0), (r, 0), (0, -r), (0, r)):
+        disc_shaded(cx + ox, cy + oy, max(2, r // 2 + 1), *LEAD)
+    for ox, oy in ((-r - 1, -r - 1), (r + 1, -r - 1), (-r - 1, r + 1), (r + 1, r + 1)):
+        disc_shaded(cx + ox, cy + oy, max(1, r // 4 + 1), *LEAD)
+    disc_shaded(cx, cy, r, *LEAD)
+    put(cx, cy - r - 1, GOLD_C)
+    if court:
+        for dy in range(r + 3, r + 9):
+            for dx in range(-r - 2, r + 3):
+                put(cx + dx, cy + dy, (214, 196, 160) if (dx + dy) % 5 else (180, 164, 132))
+        for dx in (-r - 2, r + 2):
+            for dy in range(r + 3, r + 9):
+                put(cx + dx, cy + dy, (168, 144, 112))
+    corners = [(-r - 3, -r - 2), (r + 3, -r - 2), (-r - 3, r + 2), (r + 3, r + 2), (-r - 3, r + 8), (r + 3, r + 8)]
+    for mx, my in corners[:minarets]:
+        minaret(cx + mx, cy + my, int(10 * scale) + 2)
 
 
-mosque(int(640 * MAP), int(420 * MAP), 7, ((-12, 0), (12, 0), (-10, 8), (10, 8)))        # Hagia Sophia
-mosque(int(560 * MAP), int(470 * MAP), 5, ((-9, 0), (9, 0)))                              # the Blue Mosque
-mosque(int(246 * MAP), int(318 * MAP), 4, ((-6, 0),))
-mosque(int(1110 * MAP), int(168 * MAP), 5, ((-8, 0), (8, 0)))                            # Uskudar
+def hagia_sophia(cx, cy):
+    """Hagia Sophia: a huge central dome between two half domes, ochre buttressed walls, four minarets at the corners."""
+    plaza(cx - 12, cy - 11, cx + 12, cy + 12, (206, 192, 160))
+    for dy in range(-6, 7):
+        for dx in range(-8, 9):
+            put(cx + dx, cy + dy, (226, 178, 134) if dx + dy < 4 else (184, 134, 98))
+    for dx in range(-8, 9, 4):
+        for dy in (-7, 7):
+            put(cx + dx, cy + dy, (150, 104, 76))
+            put(cx + dx, cy + dy + (1 if dy > 0 else -1), (150, 104, 76))
+    disc_shaded(cx - 6, cy, 3, *LEAD)
+    disc_shaded(cx + 6, cy, 3, *LEAD)
+    disc_shaded(cx, cy, 5, *LEAD)
+    for ox, oy in ((-9, -7), (9, -7), (-9, 7), (9, 7)):
+        minaret(cx + ox, cy + oy, 12)
 
 
-def maiden_tower():
-    cx, cy = int(KIZ[0]), int(KIZ[1])
-    for dy in range(-6, 1):
-        for dx in range(-2, 3):
-            put(cx + dx, cy + dy, (240, 236, 226) if dx < 1 else (190, 186, 178))
-    for dx in range(-3, 4):
-        put(cx + dx, cy - 3, STONE_D)
-    for k in range(3):
-        for dx in range(-2 + k, 3 - k):
-            put(cx + dx, cy - 7 - k, (184, 70, 56))
-    put(cx, cy - 11, GOLD)
+def suleymaniye(cx, cy):
+    """The Suleymaniye: a big dome and two half domes in a walled complex of domed courtyards, two tall and two short minarets."""
+    plaza(cx - 18, cy - 12, cx + 18, cy + 14, (204, 190, 158))
+    for x in range(cx - 17, cx + 18):
+        for y in (cy - 11, cy + 13):
+            put(x, y, (176, 150, 120))
+    for y in range(cy - 11, cy + 14):
+        for x in (cx - 17, cx + 17):
+            put(x, y, (176, 150, 120))
+    for k in range(-14, 15, 4):
+        disc_shaded(cx + k, cy + 11, 1, *LEAD)
+        disc_shaded(cx + k, cy - 9, 1, *LEAD)
+    for dy in range(-6, 7):
+        for dx in range(-7, 8):
+            put(cx + dx, cy - 1 + dy, (228, 198, 160) if dx + dy < 3 else (190, 154, 118))
+    disc_shaded(cx, cy - 7, 2, *LEAD)
+    disc_shaded(cx, cy + 5, 2, *LEAD)
+    disc_shaded(cx, cy - 1, 5, *LEAD)
+    for ox, oy, h in ((-9, -6, 14), (9, -6, 14), (-9, 6, 11), (9, 6, 11)):
+        minaret(cx + ox, cy + oy, h)
 
 
-maiden_tower()
+def topkapi(cx, cy):
+    """Topkapi Palace: courtyards with walls, low pavilions with green lead roofs, gardens, and the tower over the gate."""
+    plaza(cx - 16, cy - 9, cx + 16, cy + 9, (208, 194, 162))
+    for x0, x1 in ((cx - 16, cx - 5), (cx - 5, cx + 5), (cx + 5, cx + 16)):
+        for x in range(x0, x1 + 1):
+            put(x, cy - 8, (170, 146, 116))
+            put(x, cy + 8, (170, 146, 116))
+        for y in range(cy - 8, cy + 9):
+            put(x0, y, (170, 146, 116))
+    for y in range(cy - 8, cy + 9):
+        put(cx + 16, y, (170, 146, 116))
+    # gardens
+    for y in range(cy + 2, cy + 8):
+        for x in range(cx + 6, cx + 15):
+            put(x, y, PARK_G if (x + y) % 4 else PARK_L)
+    for x0, y0, w, h in ((cx - 14, cy - 6, 6, 4), (cx - 3, cy - 6, 7, 5), (cx + 7, cy - 6, 6, 4), (cx - 13, cy + 2, 5, 4), (cx - 2, cy + 1, 5, 5)):
+        for y in range(y0, y0 + h):
+            for x in range(x0, x0 + w):
+                put(x, y, (96, 144, 128) if x < x0 + w - 1 and y < y0 + h - 1 else (60, 100, 90))
+    disc_shaded(cx + 8, cy - 4, 2, (170, 168, 150), (214, 212, 194), (110, 108, 96))
+    for k in range(7):
+        put(cx - 10, cy - 7 - k, (226, 214, 190))
+        put(cx - 9, cy - 7 - k, (186, 170, 140))
+    for dx in range(-2, 3):
+        put(cx - 10 + dx, cy - 14, (96, 140, 124))
+    put(cx - 10, cy - 16, GOLD_C)
+
+
+def grand_bazaar(cx, cy):
+    plaza(cx - 8, cy - 5, cx + 8, cy + 5, (190, 170, 140))
+    for y in range(cy - 4, cy + 5):
+        for x in range(cx - 7, cx + 8):
+            put(x, y, (176, 152, 124))
+    for dx in range(-6, 7, 3):
+        for dy in range(-3, 5, 3):
+            disc_shaded(cx + dx, cy + dy, 1, *LEAD)
 
 
 def galata_tower(cx, base):
-    """Galata Tower: a tall round stone tower, a balcony under its pointed cap."""
-    for k in range(0, 21):
-        w = 3 if k < 13 else 4
+    """Galata Tower: a round stone tower on its hill with a ring of windows, a balcony and a grey conical cap."""
+    plaza(cx - 8, base - 4, cx + 8, base + 5, (200, 184, 150))
+    for k in range(0, 22):
+        w = 3 if k < 15 else 4
         for dx in range(-w, w + 1):
-            put(cx + dx, base - k, (222, 206, 176) if dx < 0 else (188, 168, 140) if dx < w - 1 else (136, 116, 96))
-        if k % 4 == 1:
-            put(cx - 1, base - k, (74, 60, 50))
+            c = (234, 216, 180) if dx < 0 else (200, 178, 142) if dx < w - 1 else (140, 118, 96)
+            put(cx + dx, base - k, c)
+        if k % 5 == 2 and k < 14:
+            put(cx - 1, base - k, (84, 68, 56))
+            put(cx + 1, base - k, (84, 68, 56))
     for dx in range(-6, 7):
-        put(cx + dx, base - 13, STONE_D)
-        put(cx + dx, base - 14, (96, 88, 82))
-    for k in range(0, 10):
+        put(cx + dx, base - 15, (110, 100, 94))
+        put(cx + dx, base - 16, (170, 160, 150))
+    for k in range(0, 11):
         for dx in range(-4 + k // 2, 5 - k // 2):
-            put(cx + dx, base - 21 - k, (190, 74, 60) if dx < 1 else (140, 52, 46))
-    put(cx, base - 31, GOLD)
-    put(cx, base - 32, GOLD)
+            put(cx + dx, base - 22 - k, (138, 146, 162) if dx < 1 else (92, 100, 118))
+    put(cx, base - 33, GOLD_C)
+    put(cx, base - 34, GOLD_C)
 
 
+def maiden_tower():
+    """The Maiden's Tower: a small white tower with a red dome on its own rock off the Asian shore."""
+    cx, cy = int(KIZ[0]), int(KIZ[1])
+    for dy in range(-1, 3):
+        for dx in range(-5, 6):
+            if abs(dx) + abs(dy) * 2 <= 6:
+                put(cx + dx, cy + dy + 1, STONE if (dx + dy) % 2 else STONE_D)
+    for dy in range(-7, 1):
+        for dx in range(-2, 3):
+            put(cx + dx, cy + dy, (246, 242, 232) if dx < 1 else (196, 192, 184))
+    for dx in range(-3, 4):
+        put(cx + dx, cy - 4, (150, 146, 140))
+    for k in range(3):
+        for dx in range(-2 + k, 3 - k):
+            put(cx + dx, cy - 8 - k, (190, 74, 58))
+    put(cx, cy - 12, GOLD_C)
+
+
+def dolmabahce():
+    """Dolmabahce Palace: a long white palace along the Bosphorus shore with a domed ceremonial hall and a garden."""
+    x0, y0 = int(752 * MAP), int(8 * MAP)
+    x1, y1 = int(776 * MAP), int(112 * MAP)
+    for t in range(0, 101):
+        x = x0 + (x1 - x0) * t // 100 - 8
+        y = y0 + (y1 - y0) * t // 100
+        for k in range(-2, 4):
+            put(x + k, y, (244, 240, 232) if k < 2 else (190, 186, 178))
+            put(x + k, y + 1, (244, 240, 232) if k < 2 else (190, 186, 178))
+        if t % 14 == 6:
+            put(x, y - 1, (190, 74, 58))
+        for k in range(-6, -2):
+            put(x + k, y, PARK_G if (x + y + k) % 3 else PARK_L)
+    cx, cy = x0 + (x1 - x0) // 2 - 8, y0 + (y1 - y0) // 2
+    disc_shaded(cx, cy - 1, 3, (226, 214, 196), (250, 246, 238), (168, 150, 132))
+    put(cx, cy - 5, GOLD_C)
+
+
+def haydarpasa(cx, cy):
+    """Haydarpasa Station: a U shaped neo gothic building opening on the sea, four pointed corner towers, a long pier."""
+    plaza(cx - 9, cy - 8, cx + 9, cy + 8, (200, 186, 156))
+    for y in range(cy - 7, cy + 8):
+        for x in range(cx - 4, cx + 9):
+            if x >= cx + 3 or y < cy - 3 or y > cy + 3:
+                put(x, y, (196, 184, 156) if (x + y) % 6 else (170, 158, 132))
+    for x in range(cx - 4, cx + 9):
+        for y in (cy - 7, cy + 7):
+            put(x, y, (90, 100, 122))
+    for tx, ty in ((cx - 4, cy - 7), (cx - 4, cy + 7), (cx + 8, cy - 7), (cx + 8, cy + 7)):
+        for k in range(6):
+            put(tx, ty - k, (214, 202, 176))
+        for k in range(1, 4):
+            for dx in range(-(3 - k), 4 - k):
+                put(tx + dx, ty - 5 - k, (76, 92, 118))
+        put(tx, ty - 9, GOLD_C)
+    for dx in range(1, 14):
+        put(cx - 5 - dx, cy, (170, 160, 150))
+        put(cx - 5 - dx, cy + 1, (110, 104, 98))
+
+
+def selimiye(cx, cy):
+    """Selimiye Barracks: a huge pale yellow square building round a courtyard, with a tower at each corner."""
+    plaza(cx - 11, cy - 11, cx + 11, cy + 11, (206, 192, 150))
+    for y in range(cy - 10, cy + 11):
+        for x in range(cx - 10, cx + 11):
+            inner = abs(x - cx) < 7 and abs(y - cy) < 7
+            put(x, y, (200, 184, 130) if inner else (240, 216, 140) if (x + y) % 7 else (206, 180, 104))
+    for tx, ty in ((cx - 10, cy - 10), (cx + 10, cy - 10), (cx - 10, cy + 10), (cx + 10, cy + 10)):
+        for dy in range(-3, 2):
+            for dx in range(-2, 3):
+                put(tx + dx, ty + dy, (252, 230, 160) if dx < 1 else (206, 180, 110))
+        for k in range(3):
+            for dx in range(-1 + k // 2, 2 - k // 2):
+                put(tx + dx, ty - 4 - k, (196, 74, 58))
+
+
+hagia_sophia(int(640 * MAP), int(418 * MAP))
+mosque(int(552 * MAP), int(480 * MAP), 1.0, 6)                  # the Blue Mosque, six minarets
+suleymaniye(int(392 * MAP), int(346 * MAP))
+topkapi(int(704 * MAP), int(372 * MAP))
+grand_bazaar(int(470 * MAP), int(420 * MAP))
+mosque(int(1010 * MAP), int(176 * MAP), 0.7, 2, False)          # Yeni Valide, Uskudar
+mosque(int(1128 * MAP), int(256 * MAP), 0.6, 2, False)          # Mihrimah Sultan
+mosque(int(246 * MAP), int(318 * MAP), 0.7, 2, False)
+selimiye(int(950 * MAP), int(452 * MAP))
+haydarpasa(int(1010 * MAP), int(606 * MAP))
+dolmabahce()
+maiden_tower()
 GALATA = (int(590 * MAP), int(268 * MAP))
 galata_tower(GALATA[0], GALATA[1])
 
-# the Galata Bridge across the Golden Horn's mouth
-for x in range(int(535 * MAP), int(640 * MAP)):
-    t = (x - int(535 * MAP)) / (int(640 * MAP) - int(535 * MAP))
-    y = int((335 - 12 * t) * MAP) + 0
-    if water[y][x] or water[y + 1][x]:
-        put(x, y, STONE_L)
-        put(x, y + 1, STONE_D)
-        put(x, y - 1, (110, 100, 96) if x % 3 == 0 else STONE_L)
+# the Galata Bridge across the Golden Horn's mouth: a roadway, a tram line, railings and the fishermen's rail
+bx0, bx1 = int(545 * MAP), int(655 * MAP)
+for x in range(bx0, bx1):
+    t = (x - bx0) / (bx1 - bx0)
+    y = int((338 - 14 * t) * MAP)
+    if water[y][x] or water[y + 1][x] or water[y - 1][x]:
+        for k in range(-3, 3):
+            put(x, y + k, (96, 92, 96) if k in (-2, 1) else (128, 124, 128))
+        put(x, y - 3, (230, 226, 218))
+        put(x, y + 2, (230, 226, 218))
+        if x % 4 == 0:
+            put(x, y - 4, (252, 232, 160))
+        if x % 12 == 0:
+            for k in range(3, 7):
+                put(x, y + k, (110, 104, 98))
+# ferry piers along the shores
+for cx, cy, dx, dy in ((int(700 * MAP), int(300 * MAP), 1, 0), (int(640 * MAP), int(520 * MAP), 0, 1), (int(1000 * MAP), int(300 * MAP), -1, 0),
+                       (int(1030 * MAP), int(500 * MAP), -1, 0), (int(1060 * MAP), int(760 * MAP), -1, 0)):
+    for k in range(10):
+        x, y = cx + dx * k, cy + dy * k
+        if 0 <= x < W and 0 <= y < H and water[y][x]:
+            put(x, y, STONE_L)
+            put(x + (1 if dy else 0), y + (1 if dx else 0), STONE_D)
 
 # ---- ships ------------------------------------------------------------------------------------------------------------
 ships = []
@@ -406,36 +566,6 @@ for i, (x, y) in enumerate(ships):
     for dx in range(-8, 0):                       # a wake
         if dx % 2:
             put(x + dx, y, FOAM)
-
-# ---- lettering (3 x 5 capitals) -----------------------------------------------------------------------------------------
-FONT = {
-    "A": "010101111101101", "B": "110101110101110", "C": "011100100100011", "D": "110101101101110", "E": "111100110100111",
-    "G": "011100101101011", "H": "101101111101101", "I": "111010010010111", "K": "101101110101101", "L": "100100100100111",
-    "M": "101111111101101", "N": "110101101101101", "O": "010101101101010", "P": "110101110100100", "R": "110101110101101",
-    "S": "011100010001110", "T": "111010010010010", "U": "101101101101111", " ": "000000000000000",
-}
-
-
-def text_on(x, y, s, color, scale=2, shadow=INK):
-    """`s` in 3 x 5 capitals, `scale` texels a dot, with a drop shadow."""
-    start = x
-    for layer in (shadow, color):
-        x = start
-        off = 1 if layer == shadow else 0
-        for ch in s:
-            glyph = FONT.get(ch, FONT[" "])
-            for i, bit in enumerate(glyph):
-                if bit == "1":
-                    for sy in range(scale):
-                        for sx in range(scale):
-                            put(x + (i % 3) * scale + sx + off, y + (i // 3) * scale + sy + off, layer)
-            x += 4 * scale
-
-
-text_on(int(1100 * MAP), int(30 * MAP), "BOSPHORUS", (214, 238, 244))
-text_on(int(60 * MAP), int(840 * MAP), "MARMARA", (200, 232, 242))
-text_on(int(430 * MAP), int(205 * MAP), "GOLDEN HORN", (226, 244, 246), 1)
-text_on(int(440 * MAP), int(560 * MAP), "ISTANBUL", WHITE, 2)
 
 # ---- the frame ------------------------------------------------------------------------------------------------------
 for x in range(W):

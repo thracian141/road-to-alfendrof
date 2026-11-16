@@ -143,16 +143,29 @@ fn default_sfx_volume() -> u8 {
     Settings::default().sfx_volume
 }
 
-fn settings_path() -> PathBuf {
+/// A file in the game's data folder (next to the settings).
+pub(crate) fn data_file(name: &str) -> PathBuf {
     // Windows: %APPDATA%; macOS: ~/Library/Application Support; elsewhere: ~/.config
     let dir = std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
         let home = PathBuf::from(std::env::var_os("HOME")?);
         Some(if cfg!(target_os = "macos") { home.join("Library").join("Application Support") } else { home.join(".config") })
     });
     match dir {
-        Some(dir) => dir.join("Road to Alfendrof").join("settings.ron"),
-        None => PathBuf::from("settings.ron"),
+        Some(dir) => dir.join("Road to Alfendrof").join(name),
+        None => PathBuf::from(name),
     }
+}
+
+fn settings_path() -> PathBuf {
+    data_file("settings.ron")
+}
+
+/// Writes a file, making its folder first.
+pub(crate) fn write_file(path: &std::path::Path, text: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
 pub fn load() -> Settings {
@@ -190,12 +203,7 @@ fn save(settings: &Settings) {
     let path = settings_path();
     let result = ron::ser::to_string_pretty(&saved, ron::ser::PrettyConfig::default())
         .map_err(|e| e.to_string())
-        .and_then(|text| {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(&path, text).map_err(|e| e.to_string())
-        });
+        .and_then(|text| write_file(&path, &text));
     if let Err(e) = result {
         warn!("could not save settings to {}: {e}", path.display());
     }
