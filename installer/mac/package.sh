@@ -32,6 +32,16 @@ case "$(/usr/bin/file -b "$BINARY")" in
     *Mach-O*executable*|*Mach-O*universal*) ;;
     *) echo "Expected a macOS Mach-O executable: $BINARY" >&2; exit 1 ;;
 esac
+# Disk-image tools and Finder fail now and then on a busy CI machine ("Resource busy"): try a few times, and say what failed.
+retry() {
+    local attempt=1
+    until "$@"; do
+        local status=$?
+        echo "failed (exit $status), attempt $attempt of 5: $*" >&2
+        [[ $attempt -lt 5 ]] && sleep $((attempt * 5)) || return $status
+        attempt=$((attempt + 1))
+    done
+}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
@@ -80,9 +90,10 @@ ln -s /Applications "$STAGE/Applications"
 /usr/bin/clang -fobjc-arc -framework AppKit "$SCRIPT_DIR/background.m" -o "$WORK/background"
 "$WORK/background" \
     "$ROOT/assets/ui/logo.png" "$ROOT/assets/ui/emblem.png" "$STAGE/.background/background.png"
-/usr/bin/hdiutil create -quiet -srcfolder "$STAGE" -volname "Road to Alfendrof" \
+echo "Creating the disk image"
+retry /usr/bin/hdiutil create -srcfolder "$STAGE" -volname "Road to Alfendrof" \
     -fs HFS+ -format UDRW "$WORK/installer.dmg"
-/usr/bin/hdiutil attach -quiet -readwrite -noverify -noautoopen \
+retry /usr/bin/hdiutil attach -readwrite -noverify -noautoopen -nobrowse \
     -mountpoint "$MOUNT" "$WORK/installer.dmg"
 # Finder writes .DS_Store window geometry, artwork and icon positions onto the image.
 /usr/bin/osascript - "$MOUNT" <<'APPLESCRIPT'
@@ -113,8 +124,8 @@ on run arguments
 end run
 APPLESCRIPT
 /bin/sync
-/usr/bin/hdiutil detach -quiet "$MOUNT"
-/usr/bin/hdiutil convert -quiet "$WORK/installer.dmg" -format UDZO \
+retry /usr/bin/hdiutil detach "$MOUNT"
+retry /usr/bin/hdiutil convert "$WORK/installer.dmg" -format UDZO \
     -imagekey zlib-level=9 -o "$WORK/RoadToAlfendrof-Mac.dmg"
 # Publish only complete artifacts, leaving any previous build intact until this point.
 mv -f "$WORK/RoadToAlfendrof-Mac.zip" "$OUTPUT/RoadToAlfendrof-Mac.zip"
