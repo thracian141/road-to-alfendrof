@@ -21,6 +21,33 @@ const SLIP_PERCENT: u32 = 10;
 /// How much better than the rest something has to be to beat the rules' own choice.
 const RULES_EDGE: f32 = 10.0;
 
+/// How well the CPU plays: how often it slips, how long it takes to notice an attack, and whether it learns the player's
+/// habits. The campaign raises it level by level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Difficulty {
+    /// Out of a hundred decisions, how many take the second best choice.
+    pub slip: u32,
+    /// Frames before it notices an attack that has just started.
+    pub reaction: u32,
+    pub learns: bool,
+}
+
+impl Difficulty {
+    /// What a fight against the CPU is usually like (the same as campaign level 4).
+    pub const NORMAL: Difficulty = Difficulty { slip: SLIP_PERCENT, reaction: REACTION, learns: true };
+
+    /// Campaign level `n` (1 easy to 5 hard).
+    pub fn level(n: u8) -> Difficulty {
+        match n {
+            0 | 1 => Difficulty { slip: 40, reaction: 16, learns: false },
+            2 => Difficulty { slip: 28, reaction: 13, learns: false },
+            3 => Difficulty { slip: 18, reaction: 11, learns: true },
+            4 => Difficulty::NORMAL,
+            _ => Difficulty { slip: 4, reaction: 7, learns: true },
+        }
+    }
+}
+
 /// What the CPU does for the next `DECISION_FRAMES`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Plan {
@@ -90,6 +117,7 @@ pub struct Brain {
     ctx_ready: bool,
     /// Whether it learns at all (off, it only has the usual mix to go on).
     learning: bool,
+    difficulty: Difficulty,
     /// The kinds of plan it chose last, newest first (its own habits).
     own: [usize; 2],
     /// The CPU's own habits, learned the same way as the player's: what it tends to do in which situation. A plan it is
@@ -128,6 +156,7 @@ impl Brain {
             before_last: habits::IDLE,
             ctx_ready: false,
             learning: true,
+            difficulty: Difficulty::NORMAL,
             own: [usize::MAX; 2],
             self_habits: Habits::new(),
             mine_before_last: habits::IDLE,
@@ -150,6 +179,17 @@ impl Brain {
         Brain { learning: false, ..Brain::new() }
     }
 
+    /// A brain that plays at `difficulty`.
+    pub fn with_difficulty(difficulty: Difficulty) -> Self {
+        Brain { learning: difficulty.learns, difficulty, ..Brain::new() }
+    }
+
+    /// Plays at `difficulty` from now on (what it has learned stays).
+    pub fn set_difficulty(&mut self, difficulty: Difficulty) {
+        self.learning = difficulty.learns;
+        self.difficulty = difficulty;
+    }
+
     /// The CPU's input for fighter `me` this frame. `chars[i]` is fighter `i`'s character.
     pub fn input(&mut self, state: &GameState, me: usize, chars: [&CharacterData; 2]) -> Input {
         // a training dummy does nothing at all
@@ -161,7 +201,7 @@ impl Brain {
             return hold;
         }
         if state.frame < self.last_frame {
-            *self = Brain { learning: self.learning, ..Brain::new() };
+            *self = Brain { learning: self.learning, difficulty: self.difficulty, ..Brain::new() };
         }
         self.last_frame = state.frame;
         let rules = |s: &GameState| cpu_input_vs(s, me, chars[me], chars[1 - me]);
@@ -190,7 +230,7 @@ impl Brain {
     /// Notes what both fighters are doing, for the habits and (the opponent's last few frames) for the reaction time.
     fn watch(&mut self, state: &GameState, opp: usize, chars: [&CharacterData; 2]) {
         self.seen.push_back(state.fighters[opp].clone());
-        while self.seen.len() > REACTION as usize + 1 {
+        while self.seen.len() > self.difficulty.reaction as usize + 1 {
             self.seen.pop_front();
         }
         let me = 1 - opp;
@@ -236,7 +276,7 @@ impl Brain {
         }
         // what the CPU sees: an attack that has only just started isn't there yet
         let mut base = state.clone();
-        if o.state == FighterState::Attack && o.state_frame < REACTION {
+        if o.state == FighterState::Attack && o.state_frame < self.difficulty.reaction {
             if let Some(old) = self.seen.front().filter(|f| f.state != FighterState::Attack) {
                 base.fighters[opp] = old.clone();
             }
@@ -298,7 +338,7 @@ impl Brain {
         }
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         // now and then a slip
-        let slip = noise(state.frame / DECISION_FRAMES, me as u32 + 9) % 100 < SLIP_PERCENT;
+        let slip = noise(state.frame / DECISION_FRAMES, me as u32 + 9) % 100 < self.difficulty.slip;
         scored[if slip && scored.len() > 1 { 1 } else { 0 }].1
     }
 }
@@ -565,6 +605,39 @@ mod tests {
         assert!(self_penalty(0.9) > self_penalty(0.7) && self_penalty(0.7) > 0.0);
         // a brain with learning off still plays
         versus_pattern(&load("katmata"), &load("ayz"), 0, Brain::without_learning(), 1);
+    }
+
+    #[test]
+    fn a_harder_difficulty_plays_better_than_an_easier_one() {
+        // the two play each other (both ways round, so the sides and characters even out); the sharper one should come out ahead
+        let (mut hard_lead, mut rounds_hard, mut rounds_easy) = (0, 0, 0);
+        for (a, b) in PAIRS {
+            let (a, b) = (load(a), load(b));
+            for hard_side in 0..2 {
+                let mut brains = [Brain::with_difficulty(Difficulty::level(1)), Brain::with_difficulty(Difficulty::level(1))];
+                brains[hard_side] = Brain::with_difficulty(Difficulty::level(5));
+                let mut s = GameState::new();
+                s.set_health([a.health.unwrap_or(Fighter::MAX_HEALTH), b.health.unwrap_or(Fighter::MAX_HEALTH)]);
+                for _ in 0..3600 {
+                    let inputs = [brains[0].input(&s, 0, [&a, &b]), brains[1].input(&s, 1, [&a, &b])];
+                    s.step(inputs, [&a, &b]);
+                    if s.phase != Phase::Fighting {
+                        break;
+                    }
+                }
+                let lead = s.fighters[hard_side].health - s.fighters[1 - hard_side].health;
+                hard_lead += lead;
+                if lead > 0 { rounds_hard += 1 } else if lead < 0 { rounds_easy += 1 }
+            }
+        }
+        println!("level 5 against level 1: health lead {hard_lead}, rounds won {rounds_hard} to {rounds_easy}");
+        assert!(hard_lead > 0 && rounds_hard >= rounds_easy, "the level 5 brain should come out ahead: {hard_lead}, {rounds_hard} to {rounds_easy}");
+        // the levels run from sloppy to sharp
+        for n in 1..5 {
+            let (a, b) = (Difficulty::level(n), Difficulty::level(n + 1));
+            assert!(a.slip >= b.slip && a.reaction >= b.reaction, "level {n} is no easier than {}", n + 1);
+        }
+        assert_eq!(Difficulty::level(4), Difficulty::NORMAL);
     }
 
     #[test]
