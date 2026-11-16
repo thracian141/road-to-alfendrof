@@ -58,15 +58,6 @@ pub fn style_of(data: &CharacterData) -> Style {
     }
 }
 
-/// The CPU's input when it doesn't know who it is fighting (it is treated as fighting its own kind).
-pub fn cpu_input(state: &GameState, me: usize, data: &CharacterData) -> Input {
-    cpu_input_vs(state, me, data, data)
-}
-
-/// The CPU's input for fighter `me` playing `data` against a fighter playing `opp`. It plays differently
-/// against a ranged opponent (it dodges and answers shots, closes the gap and doesn't back off) than a
-/// close-range one (a ranged CPU then keeps further away and shoots more), and every champion uses
-/// its own tools.
 /// A CPU charging a pounce (the Goblin King's heavy) keeps the button down for a while, longer the further off the enemy
 /// is (and a bit longer or shorter at random), then lets go. `None` when it isn't charging one.
 pub fn pounce_charge(state: &GameState, me: usize, data: &CharacterData) -> Option<Input> {
@@ -84,6 +75,8 @@ pub fn pounce_charge(state: &GameState, me: usize, data: &CharacterData) -> Opti
     Some(Input(if m.charge < want { Input::HEAVY } else { 0 }))
 }
 
+/// The CPU's input for fighter `me` (playing `data`) against someone playing `opp`: it plays ranged and close-range
+/// opponents differently, and every champion uses its own tools.
 pub fn cpu_input_vs(state: &GameState, me: usize, data: &CharacterData, opp: &CharacterData) -> Input {
     // a training dummy does nothing at all
     if data.dummy {
@@ -342,6 +335,11 @@ fn jumps_the_gap(h: &crate::sim::MoveData) -> bool {
 mod tests {
     use super::*;
     use crate::sim::CharacterData;
+
+    /// The CPU against its own kind.
+    fn cpu_input(state: &GameState, me: usize, data: &CharacterData) -> Input {
+        cpu_input_vs(state, me, data, data)
+    }
 
     fn chars() -> [CharacterData; 2] {
         [

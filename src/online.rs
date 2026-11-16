@@ -84,14 +84,11 @@ struct PopupText;
 #[derive(Component)]
 struct NameText;
 
-/// Both players need the same version and character files.
-fn build_of(roster: &Roster) -> u32 {
-    let mut parts: Vec<String> = vec![env!("CARGO_PKG_VERSION").to_string()];
-    for c in &roster.0 {
-        parts.push(format!("{}:{:?}:{}:{}", c.name, c.moves.iter().map(|m| (m.damage, m.startup, m.active, m.recovery)).collect::<Vec<_>>(), c.walk_speed, c.health.unwrap_or(0)));
-    }
-    let refs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
-    build_id(&refs)
+/// Fingerprint of the version and every character file: two players can only meet if theirs match.
+pub fn build_of(roster: &Roster) -> u32 {
+    let mut parts = vec![env!("CARGO_PKG_VERSION").to_string(), "direct-udp-v2".to_string()];
+    parts.extend(roster.0.iter().map(|c| format!("{c:?}")));
+    build_id(&parts.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 fn drop_online(mut lobby: ResMut<OnlineLobby>, mut info: ResMut<OnlineInfo>, mut commands: Commands) {

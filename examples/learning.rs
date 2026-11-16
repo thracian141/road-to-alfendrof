@@ -4,7 +4,7 @@
 //!     cargo run --release --example learning [matches]
 
 use t2f::brain::{pattern_player, Brain};
-use t2f::sim::{CharacterData, Fighter, FighterState, GameState, Input, Phase, PX};
+use t2f::sim::{CharacterData, Fighter, GameState, Phase};
 
 const CHAMPIONS: [&str; 7] = ["ayz", "anaran", "cowboy", "gray_persona", "junkhead", "katmata", "scribe"];
 

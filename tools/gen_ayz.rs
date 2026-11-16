@@ -733,8 +733,8 @@ fn spec(frame: Frame) -> Spec {
     match frame {
         Frame::Idle(0) => s((Keep, Keep), 0.0, 0, stand(), 0),
         Frame::Idle(_) => s((Keep, Keep), 0.0, 1, stand(), 0),
-        // the Haymaker's scythe spin is drawn by tools/gen_haymaker.py, not here
-        Frame::Reap(_) => s((Keep, Keep), 0.0, 0, stand(), 0),
+        // drawn by their own generators (gen_haymaker.py, gen_goblin_king_sprites.py)
+        Frame::Reap(_) | Frame::Flail(_) | Frame::Pounce(_) => s((Keep, Keep), 0.0, 0, stand(), 0),
         // Walking: a six-beat stride. The body bobs and leans into it, the arms swing against the
         // legs, and the feet step far apart on the contact beats.
         Frame::Walk(0) => s((pose((9.0, 28.0), (14.0, 33.0)), pose((36.0, 29.0), (34.0, 35.0))), 2.0, 0, legs((7.0, 45.0), (3.0, 47.0), (33.0, 45.0), (37.0, 48.0)), 0),
@@ -1005,11 +1005,6 @@ fn drawing_and_mark_with(parts: &Parts, frame: Frame, raven: bool) -> (Grid, Gri
     (body, mark)
 }
 
-/// The fallen fighter: the drawing turned onto its back (head to the left), resting on the floor.
-fn lying(g: &Grid) -> Grid {
-    lying_with(g, g)
-}
-
 /// `g` turned onto its back, placed using the bounds of `bounds_from` (so an overlay lines up).
 fn lying_with(g: &Grid, bounds_from: &Grid) -> Grid {
     let place = |g: &Grid| -> Vec<(i32, i32, char)> {
@@ -1030,28 +1025,6 @@ fn lying_with(g: &Grid, bounds_from: &Grid) -> Grid {
     let centre = (min_x + max_x) / 2;
     let mut out = Grid::blank(FRAME_W, FULL_H);
     for (x, y, ch) in place(g) {
-        out.set(x - centre + CENTRE_X, y - max_y + FULL_H - 1, ch);
-    }
-    out
-}
-
-#[allow(dead_code)]
-fn lying_old(g: &Grid) -> Grid {
-    let mut cells = Vec::new();
-    for y in 0..g.h as i32 {
-        for x in 0..g.w as i32 {
-            let ch = g.get(x, y);
-            if ch != '.' {
-                // Turn a quarter counter-clockwise.
-                cells.push((y, g.w as i32 - 1 - x, ch));
-            }
-        }
-    }
-    let (min_x, max_x) = (cells.iter().map(|c| c.0).min().unwrap(), cells.iter().map(|c| c.0).max().unwrap());
-    let max_y = cells.iter().map(|c| c.1).max().unwrap();
-    let centre = (min_x + max_x) / 2;
-    let mut out = Grid::blank(FRAME_W, FULL_H);
-    for (x, y, ch) in cells {
         out.set(x - centre + CENTRE_X, y - max_y + FULL_H - 1, ch);
     }
     out
@@ -2164,7 +2137,6 @@ const G_RIGHT_SHOULDER: (f32, f32) = (23.0, 19.5);
 enum Hand {
     Fist,
     Palm,
-    Point,
     /// A fist holding a quill like a dagger, nib forward.
     Quill,
     /// A fist holding a quill like a pen, nib down and to the left.
@@ -2288,13 +2260,6 @@ fn gs_arm(canvas: &mut Grid, shoulder: Joint, elbow: Joint, hand: Joint, kind: H
         // An open hand: the palm stretched out along the arm, for the slap and the throw.
         Hand::Palm => cells.extend(tube(&[hand, (hand.0 + ux * 5.0, hand.1 + uy * 5.0)], 5.0)),
         Hand::Quill | Hand::Pen => {}
-        // A finger gun: the index finger out along the arm, the thumb cocked up.
-        Hand::Point => {
-            cells.extend(tube(&[hand, (hand.0 + ux * 8.0, hand.1 + uy * 8.0)], 2.4));
-            cells.insert((hx, hy - 4));
-            cells.insert((hx, hy - 5));
-            cells.insert((hx + 1, hy - 4));
-        }
     }
     for &(x, y) in &cells {
         let ch = if !cells.contains(&(x + 1, y)) || !cells.contains(&(x, y + 1)) { 'b' } else { 'a' };
@@ -4721,7 +4686,7 @@ fn an_contact_sheet(default: &Grid, scale: u32) -> image::RgbaImage {
     // The effects underneath: the runes, then the goblins' drawings.
     let mut x = 8;
     let y = rows * (ch + 8) + 8;
-    let mut effects = vec![runes(0).to_png(), runes(1).to_png()];
+    let effects = vec![runes(0).to_png(), runes(1).to_png()];
     for img in effects {
         for yy in 0..img.height() * scale {
             for xx in 0..img.width() * scale {
@@ -5047,7 +5012,7 @@ fn jh_whip_sheet(default: &Grid) -> image::RgbaImage {
     let rows = (shots.len() as u32 + cols - 1) / cols;
     let mut sheet = image::RgbaImage::from_pixel(cols * cw, rows * ch, image::Rgba([196, 214, 232, 255]));
     for (i, (frame, layer)) in shots.iter().enumerate() {
-        let (mut body, _) = cb_drawing_with(&parts, *frame, jh_spec, jh_belt_whip(*frame));
+        let (body, _) = cb_drawing_with(&parts, *frame, jh_spec, jh_belt_whip(*frame));
         let mut body = body.to_png();
         junkhead_recolour(&mut body);
         let mut cell = image::RgbaImage::new(WHIP_W as u32, FULL_H as u32);

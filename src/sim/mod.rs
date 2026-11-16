@@ -6,7 +6,7 @@ pub mod fighter;
 pub mod input;
 pub mod state;
 
-pub use data::{LatchData, BleedData, BlockedStun, ZoneData, ZoneKind, BatFormData, ChannelData, AnimKind, Button, CharacterData, CurseData, HitOverride, MarkKind, PortalData, MinionData, MoveData, ProjectileData, RavenData, RavenMove, SpellData, SpellMotion};
+pub use data::{ZoneKind, AnimKind, Button, CharacterData, MarkKind, MinionData, MoveData, ProjectileData, RavenMove, SpellData, SpellMotion};
 pub use fighter::{Fighter, FighterState, PX};
 pub use input::Input;
-pub use state::{GameState, Minion, MinionMode, Zone, Phase, Projectile, Raven, Rose};
+pub use state::{GameState, Minion, MinionMode, Phase, Projectile, Raven};

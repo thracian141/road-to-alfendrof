@@ -97,10 +97,6 @@ pub struct Brain {
     /// very likely to choose anyway counts against it, so it keeps itself hard to read.
     self_habits: Habits,
     mine_before_last: usize,
-    self_aware: bool,
-    /// How often its own next action could have been guessed from its habits, and out of how many windows.
-    self_right: u32,
-    self_windows: u32,
     /// How often its guess at the player's next action was right, against how often the usual mix would have been, and how
     /// many windows that was out of.
     right: u32,
@@ -136,9 +132,6 @@ impl Brain {
             own: [usize::MAX; 2],
             self_habits: Habits::new(),
             mine_before_last: habits::IDLE,
-            self_aware: true,
-            self_right: 0,
-            self_windows: 0,
             right: 0,
             right_by_default: 0,
             guessed_windows: 0,
@@ -158,26 +151,6 @@ impl Brain {
         Brain { learning: false, ..Brain::new() }
     }
 
-    /// A brain that learns about the player but pays no attention to its own habits (for comparing).
-    pub fn without_self_awareness() -> Self {
-        Brain { self_aware: false, ..Brain::new() }
-    }
-
-    /// How often its next action could have been guessed from its own habits (lower is harder to read).
-    pub fn own_predictability(&self) -> f32 {
-        self.self_right as f32 / self.self_windows.max(1) as f32
-    }
-
-    /// Whether it learns.
-    pub fn learns(&self) -> bool {
-        self.learning
-    }
-
-    /// The odds it gives to the player's next action in the situation it is in (for tests and for looking at).
-    pub fn expects(&self) -> [f32; CLASSES] {
-        self.habits.predict(self.ctx, self.before_last)
-    }
-
     /// The CPU's input for fighter `me` this frame. `chars[i]` is fighter `i`'s character.
     pub fn input(&mut self, state: &GameState, me: usize, chars: [&CharacterData; 2]) -> Input {
         // a training dummy does nothing at all
@@ -189,7 +162,7 @@ impl Brain {
             return hold;
         }
         if state.frame < self.last_frame {
-            *self = Brain { learning: self.learning, self_aware: self.self_aware, ..Brain::new() };
+            *self = Brain { learning: self.learning, ..Brain::new() };
         }
         self.last_frame = state.frame;
         let rules = |s: &GameState| cpu_input_vs(s, me, chars[me], chars[1 - me]);
@@ -245,9 +218,6 @@ impl Brain {
         // and what the CPU itself did is learned the same way, against what the player had done: that is its own habit
         if self.ctx_ready {
             let own_ctx = (self.ctx.0, self.ctx.2, self.ctx.1);
-            let best = |p: [f32; CLASSES]| (0..CLASSES).max_by(|&a, &b| p[a].total_cmp(&p[b])).unwrap_or(0);
-            self.self_right += (best(self.self_habits.predict(own_ctx, self.mine_before_last)) == mine) as u32;
-            self.self_windows += 1;
             self.self_habits.update(own_ctx, self.mine_before_last, mine);
             self.mine_before_last = self.ctx.2;
         }
@@ -318,12 +288,10 @@ impl Brain {
             }
             // its own habits: what it is likely to do anyway counts against it, and so does the third attack of a kind in a row
             let class = plan_class(plan);
-            if self.self_aware {
-                let own = self.self_habits.predict((self.ctx.0, self.ctx.2, self.ctx.1), self.mine_before_last);
-                // (the rules' plan has no kind of its own: it counts as the habit it most plays into)
-                let likely = if plan == Plan::Rules { own.iter().cloned().fold(0.0, f32::max) } else { own[class] };
-                value -= self_penalty(likely);
-            }
+            let own = self.self_habits.predict((self.ctx.0, self.ctx.2, self.ctx.1), self.mine_before_last);
+            // the rules' plan has no kind of its own: it counts as the habit it most plays into
+            let likely = if plan == Plan::Rules { own.iter().cloned().fold(0.0, f32::max) } else { own[class] };
+            value -= self_penalty(likely);
             if plan != Plan::Rules && matches!(class, habits::LIGHT | habits::HEAVY | habits::SPECIAL) && self.own == [class, class] {
                 value -= REPEAT_PENALTY;
             }
@@ -596,15 +564,8 @@ mod tests {
         assert_eq!(self_penalty(0.3), 0.0);
         assert_eq!(self_penalty(0.5), 0.0);
         assert!(self_penalty(0.9) > self_penalty(0.7) && self_penalty(0.7) > 0.0);
-        // and it keeps count of how readable it is: a brain left playing a pattern bot has habits that can be learned
-        let (brain, _) = versus_pattern(&load("junkhead"), &load("cowboy"), 2, Brain::new(), 1);
-        let readable = brain.own_predictability();
-        println!("its own next action could be guessed {:.0}% of the time", readable * 100.0);
-        assert!(readable > 0.0 && readable <= 1.0);
-        // learning off or self-awareness off still plays (they are the variants the comparisons use)
-        for b in [Brain::without_learning(), Brain::without_self_awareness()] {
-            versus_pattern(&load("katmata"), &load("ayz"), 0, b, 1);
-        }
+        // a brain with learning off still plays
+        versus_pattern(&load("katmata"), &load("ayz"), 0, Brain::without_learning(), 1);
     }
 
     #[test]

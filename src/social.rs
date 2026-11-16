@@ -566,15 +566,7 @@ fn single_line(text: &str, max: usize) -> String {
     }
 }
 fn build_of(roster: &Roster) -> String {
-    let mut parts = vec![
-        env!("CARGO_PKG_VERSION").to_string(),
-        "direct-udp-v2".into(),
-    ];
-    parts.extend(roster.0.iter().map(|c| format!("{c:?}")));
-    format!(
-        "{:08x}",
-        net::lobby::build_id(&parts.iter().map(String::as_str).collect::<Vec<_>>())
-    )
+    format!("{:08x}", crate::online::build_of(roster))
 }
 fn drive(
     mut s: ResMut<Social>,

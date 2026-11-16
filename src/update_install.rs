@@ -2,7 +2,10 @@
 //! Run independently with `rustc --edition=2021 --test src/update_install.rs -o /tmp/update-install-tests`.
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Component;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -36,7 +39,10 @@ impl Workspace {
             .map_err(io::Error::other)?.as_nanos();
         for _ in 0..100 {
             let path = parent.join(format!(".road-to-alfendrof-update-{}-{now}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            #[cfg(unix)]
             let mut builder = fs::DirBuilder::new();
+            #[cfg(not(unix))]
+            let builder = fs::DirBuilder::new();
             #[cfg(unix)] {
                 use std::os::unix::fs::DirBuilderExt;
                 builder.mode(0o700);

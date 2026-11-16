@@ -38,10 +38,6 @@ impl Img {
         }
     }
 
-    fn disc(&mut self, cx: i32, cy: i32, r: i32, col: Rgba) {
-        self.ellipse(cx, cy, r, r, col);
-    }
-
     fn ellipse(&mut self, cx: i32, cy: i32, rx: i32, ry: i32, col: Rgba) {
         if rx <= 0 || ry <= 0 {
             return;
@@ -123,16 +119,6 @@ fn shade(col: Rgba, factor: f32) -> Rgba {
     [f(col[0]), f(col[1]), f(col[2]), col[3]]
 }
 
-fn gradient(stops: &[(f32, Rgba)], t: f32) -> Rgba {
-    for pair in stops.windows(2) {
-        let ((t0, c0), (t1, c1)) = (pair[0], pair[1]);
-        if t <= t1 {
-            return mix(c0, c1, ((t - t0) / (t1 - t0)).clamp(0.0, 1.0));
-        }
-    }
-    stops[stops.len() - 1].1
-}
-
 struct Rng(u32);
 
 impl Rng {
@@ -148,12 +134,6 @@ impl Rng {
     fn chance(&mut self, percent: u32) -> bool {
         self.next() % 100 < percent
     }
-}
-
-/// Repeatable pseudo-random number from two coordinates, for per-stone tones.
-fn hash2(a: i32, b: i32) -> u32 {
-    let h = (a as u32).wrapping_mul(73_856_093) ^ (b as u32).wrapping_mul(19_349_663);
-    (h ^ (h >> 13)).wrapping_mul(1_274_126_177) >> 8
 }
 
 // The map: a lane in Istanbul climbing to Galata Tower, with a portal over the tower.
