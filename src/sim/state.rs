@@ -264,6 +264,12 @@ impl GameState {
     }
 
     fn step_many(&mut self, inputs: &[Input], chars: &[&CharacterData]) {
+        // a training dummy can't be worn down: it is back to full every frame (the hits it took last frame still showed)
+        for (f, c) in self.fighters.iter_mut().zip(chars) {
+            if c.dummy && f.health > 0 {
+                f.health = f.max_health;
+            }
+        }
         if let Phase::Briefing(mut ready) = self.phase {
             for (i, input) in inputs.iter().enumerate() {
                 if input.has(Input::READY) {
@@ -336,7 +342,8 @@ impl GameState {
                 self.update_curses();
                 self.clear_projectiles(chars);
                 self.move_projectiles(inputs, chars);
-                if self.fighters.iter().all(|f| f.hitstop == 0) {
+                // (against a training dummy there is no clock)
+                if self.fighters.iter().all(|f| f.hitstop == 0) && !chars.iter().any(|c| c.dummy) {
                     self.timer = self.timer.saturating_sub(1);
                 }
                 if (0..2).any(|team| self.fighters.iter().enumerate().filter(|(i, _)| self.teams[*i] == team).all(|(_, f)| f.health <= 0)) || self.timer == 0 {

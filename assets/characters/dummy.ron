@@ -8,7 +8,9 @@
     sprites: Some("dummy"),
     blurbs: ["Flops a straw arm at you. Does nothing.", "Flops both straw arms. Still nothing.", "Wobbles meaningfully."],
     color: (0.78, 0.66, 0.42),
+    // it can't be worn down (its health is back to full every frame; no health bar) and there is no clock
     dummy: true,
+    health: Some(100000),
     // last in the character select
     menu_last: true,
     walk_speed: 120,

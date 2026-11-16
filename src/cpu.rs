@@ -79,7 +79,7 @@ pub fn pounce_charge(state: &GameState, me: usize, data: &CharacterData) -> Opti
         return None;
     }
     let dist = ((state.fighters[state.targets[me]].x - m.x).abs() / PX) as u32;
-    let jitter = (state.frame.wrapping_sub(m.charge) / 7 * 2_654_435_761 % 23) as u32;
+    let jitter = (state.frame.wrapping_sub(m.charge) / 7).wrapping_mul(2_654_435_761) % 23;
     let want = (14 + dist / 4 + jitter).min(mv.charge_frames);
     Some(Input(if m.charge < want { Input::HEAVY } else { 0 }))
 }

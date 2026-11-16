@@ -24,7 +24,8 @@ W, H = 84, 63
 CX = 33                   # body centre
 FLOOR = 62                # the row his feet stand on
 # the drawing is 33 x 54 with its feet on row 53
-OFF_X, OFF_Y = 17, 9
+# (the art is 35 x 59 with its feet on row 58: the body is the same as before, five rows lower under a taller crowned head)
+OFF_X, OFF_Y = 17, 4
 
 SKIN = (149, 188, 114)
 SKIN_LIGHT = (177, 231, 131)
@@ -49,10 +50,10 @@ SCRATCH = [(150, 40, 40), (220, 90, 80), (255, 220, 210)]
 here = Path(__file__).resolve().parent
 SRC = Image.open(here / "goblin_king_art.png").convert("RGBA")
 
-HIP = 33
+HIP = 38
 # where the arms and legs join, in the drawing
-BACK_SHOULDER = (8, 21)
-FRONT_SHOULDER = (25, 21)
+BACK_SHOULDER = (8, 26)
+FRONT_SHOULDER = (25, 26)
 # a kick swings the leg from the knee (the trousers above it stay as drawn)
 KNEE = 9
 BACK_HIP = (7, HIP + KNEE)
@@ -88,10 +89,12 @@ def split():
             c = SRC.getpixel((x, y))
             if c[3] == 0:
                 continue
-            if y < HIP or (x >= 24 and y <= 36 and is_skin(c)):
-                if x <= 11 and 20 <= y <= 29 and is_skin(c):
+            # (the ring on his front hand is part of the arm, whatever its colour)
+            ring = x >= 27 and y >= 34
+            if y < HIP or (x >= 24 and y <= 41 and (is_skin(c) or ring)):
+                if x <= 11 and 25 <= y <= 34 and is_skin(c):
                     back_arm.putpixel((x, y), c)
-                elif x >= 22 and 20 <= y and is_skin(c):
+                elif x >= 22 and 25 <= y and (is_skin(c) or ring):
                     front_arm.putpixel((x, y), c)
                 else:
                     upper.putpixel((x, y), c)
@@ -103,7 +106,7 @@ def split():
                     (front_leg if front else back_leg).putpixel((x, y), c)
     # short dark nails on the fingertips: the pixels of each hand furthest from its shoulder
     for img, (sx, sy) in ((back_arm, BACK_SHOULDER), (front_arm, FRONT_SHOULDER)):
-        pts = [(x, y) for y in range(img.height) for x in range(img.width) if img.getpixel((x, y))[3]]
+        pts = [(x, y) for y in range(img.height) for x in range(img.width) if img.getpixel((x, y))[3] and is_skin(img.getpixel((x, y)))]
         pts.sort(key=lambda q: -((q[0] - sx) ** 2 + (q[1] - sy) ** 2))
         for q in pts[:3]:
             img.putpixel(q, NAIL + (255,))
@@ -162,7 +165,7 @@ def two_bone(shoulder, hand, upper, fore, bend):
 
 
 def arm(img, shoulder, target, bend=1, back=False, stretch=1.0):
-    """One of his own arms, turned at the shoulder to point at `target` (the back one darker, being further away)."""
+    """One of his own arms, turned whole at the shoulder to point at `target` (the back one darker, being further away)."""
     limb = BACK_ARM if back else FRONT_ARM
     pivot = BACK_SHOULDER if back else FRONT_SHOULDER
     if back:
@@ -247,22 +250,77 @@ def head_at(p, x, y):
 
 def mouth(img, p, wide=2):
     """His mouth opened (talking, biting): dark inside, teeth top and bottom."""
-    for y in range(12, 13 + wide):
+    for y in range(17, 18 + wide):
         for x in range(14, 20):
             put(img, *head_at(p, x, y), MOUTH)
     for x in range(14, 20, 2):
-        put(img, *head_at(p, x, 12), TOOTH)
-        put(img, *head_at(p, x + 1, 12 + wide), TOOTH)
+        put(img, *head_at(p, x, 17), TOOTH)
+        put(img, *head_at(p, x + 1, 17 + wide), TOOTH)
 
 
-def pose(p, back_hand, front_hand, back_bend=1, front_bend=-1, back_leg=None, front_leg=None, before=None, after=None, back_over=False, reach_=1.0):
+# The block's arms, drawn pixel by pixel in the drawing's own greens (a boxer's guard: each upper arm hangs from its
+# shoulder, the elbow bends and the forearm comes back up to a fist in front of the chest). Rows of (first column, pixels)
+# in the drawing's coordinates; L highlight, M light, G skin, S shade, D dark, N nail, Y gold ring, P its gem.
+GUARD_PALETTE = {"L": (177, 231, 131), "M": (160, 201, 125), "G": (149, 188, 114), "S": (138, 174, 103), "D": (124, 157, 94),
+                 "N": NAIL, "Y": (255, 227, 77), "P": (140, 100, 191),
+                 # the robe's reds, for the sleeves: light, main, dark, darkest
+                 "l": (200, 127, 127), "R": (184, 89, 89), "r": (165, 71, 71), "k": (120, 52, 52)}
+# With the arms down at his sides the sleeves hang with them: the flare at each shoulder goes, and each sleeve comes down
+# over the top of the upper arm to a cuff (so only the forearm and a bit of the upper arm show). Also gone: the ring on
+# the drawing's back hand, which was left behind on the robe.
+GUARD_CLEAR = [(3, 24), (27, 24), (27, 25), (28, 25), (9, 27), (9, 28), (10, 28)]
+GUARD_SLEEVES = {
+    25: [(4, "RRRRR"), (26, "r")],
+    26: [(4, "lRRRr"), (22, "lRRRr")],
+    27: [(5, "rRRr"), (9, "R"), (22, "rRRRk")],
+    28: [(5, "krrk"), (9, "R"), (10, "r"), (23, "krrk")],
+}
+GUARD_BACK = {
+    # the upper arm hanging from under the sleeve, against his side
+    29: [(5, "LGSD")], 30: [(5, "LGSD")], 31: [(5, "MGSD")],
+    32: [(5, "GGSD")], 33: [(6, "SDD")],
+}
+GUARD_BACK_FORE = {
+    # the forearm from the elbow up across his front to the fist under his chin
+    31: [(7, "MGGS")], 30: [(8, "LGGS")], 29: [(8, "LGGS")], 28: [(9, "LGGS")], 27: [(9, "MGGS")], 26: [(10, "LGGS")],
+    22: [(11, "MMG")], 23: [(10, "LMGGS")], 24: [(10, "MGGSD")], 25: [(10, "GNGND")], 26: [(11, "Y")],
+}
+GUARD_FRONT = {
+    29: [(23, "MGSD")], 30: [(23, "LGSD")], 31: [(23, "GGSD")],
+    32: [(23, "GGSD")], 33: [(24, "SDD")],
+}
+GUARD_FRONT_FORE = {
+    # (the elbow tucked in against his side)
+    33: [(22, "DS")], 32: [(21, "SG")], 31: [(21, "LGGGS")], 30: [(21, "LGGS")], 29: [(21, "LGGS")], 28: [(20, "LGGS")], 27: [(20, "MGGS")], 26: [(19, "LGGS")],
+    22: [(18, "MMG")], 23: [(17, "LMGGS")], 24: [(17, "MGGGS")], 25: [(17, "YPNGN")],
+}
+
+
+def guard(img, p):
+    """The block: his drawn guard arms (see `GUARD_BACK`...), placed on the body the way the pose places the drawing."""
+    for x, y in GUARD_CLEAR:
+        at = head_at(p, x, y)
+        if 0 <= at[0] < img.width and 0 <= at[1] < img.height:
+            img.putpixel(at, (0, 0, 0, 0))
+    for rows, tone in ((GUARD_SLEEVES, 1.0), (GUARD_BACK, 0.85), (GUARD_BACK_FORE, 0.85), (GUARD_FRONT, 1.0), (GUARD_FRONT_FORE, 1.0)):
+        for y, runs in rows.items():
+            for x0, pixels in runs:
+                for k, ch in enumerate(pixels):
+                    c = GUARD_PALETTE[ch]
+                    if tone != 1.0 and ch in "LMGSD":
+                        c = tuple(round(v * tone) for v in c)
+                    put(img, *head_at(p, x0 + k, y), c)
+
+
+def pose(p, back_hand, front_hand, back_bend=1, front_bend=-1, back_leg=None, front_leg=None, before=None, after=None, back_over=False, reach_=1.0, drawn=None):
     """Draw a pose: each hand at a point relative to its shoulder; `back_leg`/`front_leg` (foot relative to the hip,
-    knee bend) draw that leg out instead of the drawing's. `back_over` draws the back arm over the body (swung across)."""
+    knee bend) draw that leg out instead of the drawing's. `back_over` draws the back arm over the body (swung across).
+    `drawn` draws both arms itself (bent arms drawn for the pose) instead of turning the drawing's."""
     img = blank()
     if before:
         before(img, p)
     bs, fs = p.shoulder("back"), p.shoulder("front")
-    if not back_over:
+    if not back_over and not drawn:
         arm(img, bs, (bs[0] + back_hand[0], bs[1] + back_hand[1]), back_bend, back=True)
     # (a back leg kicked forward swings out in front of him)
     kicked = back_leg and back_leg[0][0] > 0
@@ -277,9 +335,12 @@ def pose(p, back_hand, front_hand, back_bend=1, front_bend=-1, back_leg=None, fr
     if front_leg:
         fh = p.hip("front")
         leg(img, fh, (fh[0] + front_leg[0][0], fh[1] + front_leg[0][1]), front_leg[1], stretch=reach_)
-    if back_over:
-        arm(img, bs, (bs[0] + back_hand[0], bs[1] + back_hand[1]), back_bend, stretch=reach_)
-    arm(img, fs, (fs[0] + front_hand[0], fs[1] + front_hand[1]), front_bend, stretch=reach_)
+    if drawn:
+        drawn(img, p)
+    else:
+        if back_over:
+            arm(img, bs, (bs[0] + back_hand[0], bs[1] + back_hand[1]), back_bend, stretch=reach_)
+        arm(img, fs, (fs[0] + front_hand[0], fs[1] + front_hand[1]), front_bend, stretch=reach_)
     if after:
         after(img, p)
     return img
@@ -333,9 +394,9 @@ def frames():
     for i in range(2):
         p = Pose(dx=-1 - i, lean=-4 - i * 3, legs=(-1, 0, 2, 2), bend=(0, -2))
         out[f"hurt_{i}"] = pose(p, (-10, 2 - i * 6), (3, 12 - i * 4))
-    # block: forearms crossed in front of his face
-    bp = Pose(drop=3, squash=3, lean=-1, spread=2)
-    out["block"] = pose(bp, (12, -4), (4, -6), back_bend=-1, front_bend=1)
+    # block: both forearms raised in front of his face, drawn bent (see `guard`)
+    # (the same body as standing still: only the arms change)
+    out["block"] = pose(Pose(drop=1, squash=1, spread=1, lean=2), (0, 0), (0, 0), drawn=guard)
     # knocked out: flat on his back
     ko = pose(Pose(), (-4, 13), (4, 13))
     ko = tilt(ko, 90, pivot=(CX, FLOOR - 9))

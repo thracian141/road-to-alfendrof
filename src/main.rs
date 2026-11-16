@@ -541,15 +541,18 @@ fn spawn_fight(
                 let dir = if side % 2 == 0 { -1.0 } else { 1.0 };
                 let mid = dir * (BAR_EDGE - BAR_W / 2.0);
                 let bar_y = BAR_Y - (side / 2) as f32 * 36.0;
-                hud.spawn((
-                    Sprite::from_color(Color::srgb(0.15, 0.05, 0.05), Vec2::new(BAR_W + 2.0, BAR_H + 2.0)),
-                    Transform::from_xyz(mid, bar_y, 10.0),
-                ));
-                hud.spawn((
-                    HealthBar(side),
-                    Sprite::from_color(Color::srgb(0.95, 0.8, 0.2), Vec2::new(BAR_W, BAR_H)),
-                    Transform::from_xyz(mid, bar_y, 10.1),
-                ));
+                // a training dummy can't be worn down, so it has no health bar
+                if !roster.0[selection.chars[side]].dummy {
+                    hud.spawn((
+                        Sprite::from_color(Color::srgb(0.15, 0.05, 0.05), Vec2::new(BAR_W + 2.0, BAR_H + 2.0)),
+                        Transform::from_xyz(mid, bar_y, 10.0),
+                    ));
+                    hud.spawn((
+                        HealthBar(side),
+                        Sprite::from_color(Color::srgb(0.95, 0.8, 0.2), Vec2::new(BAR_W, BAR_H)),
+                        Transform::from_xyz(mid, bar_y, 10.1),
+                    ));
+                }
                 // special meter: a thin bar under the health bar
                 let special_y = bar_y - BAR_H / 2.0 - 4.0;
                 hud.spawn((
@@ -1019,7 +1022,9 @@ fn sync_hud(
         sprite.color = if won { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.25, 0.25, 0.3) };
     }
     // texts are only written when they change: any write makes Bevy lay the text out again
-    let new_timer = s.timer.div_ceil(60).to_string();
+    // (against a training dummy there is no clock)
+    let dummy = (0..s.fighters.len()).any(|i| roster.0[sel.chars[i]].dummy);
+    let new_timer = if dummy { String::new() } else { s.timer.div_ceil(60).to_string() };
     if timer.0 != new_timer {
         timer.0 = new_timer;
     }
