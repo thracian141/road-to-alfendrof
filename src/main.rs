@@ -1,6 +1,18 @@
 // no console window in release builds on Windows
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+/// Assign a component field only when the value is different. Every write through `DerefMut` marks the component
+/// changed, which makes Bevy redo its transform, visibility and render work for it, so values that are set every frame
+/// (positions, colours, images) go through this.
+macro_rules! set_ne {
+    ($place:expr, $value:expr) => {{
+        let value = $value;
+        if $place != value {
+            $place = value;
+        }
+    }};
+}
+
 mod briefing;
 mod vulkan;
 mod menus;
@@ -941,8 +953,8 @@ fn sync_hud(
         let frac = s.fighters[*side].meter as f32 / Fighter::METER_MAX as f32;
         let w = BAR_W * frac.clamp(0.0, 1.0);
         let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
-        sprite.custom_size = Some(Vec2::new(w, 3.0));
-        tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
+        set_ne!(sprite.custom_size, Some(Vec2::new(w, 3.0)));
+        set_ne!(tf.translation.x, dir * (BAR_EDGE - BAR_W + w / 2.0));
         // purple while filling, pulsing gold when ready (a goblin king's is the gold he has collected: gold all along, with
         // a glint running along it)
         let gold = roster.0[sel.chars[*side]].gold_meter;
@@ -960,13 +972,13 @@ fn sync_hud(
         let frac = s.fighters[*side].health.max(0) as f32 / s.fighters[*side].max_health.max(1) as f32;
         let w = BAR_W * frac;
         let dir = if *side % 2 == 0 { -1.0 } else { 1.0 };
-        sprite.custom_size = Some(Vec2::new(w, BAR_H));
+        set_ne!(sprite.custom_size, Some(Vec2::new(w, BAR_H)));
         // bars drain from the centre outwards
-        tf.translation.x = dir * (BAR_EDGE - BAR_W + w / 2.0);
+        set_ne!(tf.translation.x, dir * (BAR_EDGE - BAR_W + w / 2.0));
     }
     for (RoundPip(side, n), mut sprite) in &mut pips {
         let won = s.wins[s.teams[*side] as usize] > *n;
-        sprite.color = if won { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.25, 0.25, 0.3) };
+        set_ne!(sprite.color, if won { Color::srgb(1.0, 0.85, 0.2) } else { Color::srgb(0.25, 0.25, 0.3) });
     }
     // texts are only written when they change: any write makes Bevy lay the text out again
     // (against a training dummy there is no clock)

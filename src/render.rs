@@ -9,18 +9,6 @@ use t2f::sim::{Fighter, FighterState, GameState, MarkKind, Phase, ProjectileData
 
 use crate::{AppState, Roster, Selection, Sim, GROUND_Y};
 
-/// Assign a component field only when the value is different. Every write through `DerefMut` marks the component
-/// changed, which makes Bevy redo its transform, visibility and render work for it, so values that are set every frame
-/// (positions, colours, images) go through this.
-macro_rules! set_ne {
-    ($place:expr, $value:expr) => {{
-        let value = $value;
-        if $place != value {
-            $place = value;
-        }
-    }};
-}
-
 
 /// Image handles of every drawing: one map per fighter, keyed by file name.
 #[derive(Resource, Default)]
@@ -358,7 +346,7 @@ pub fn pose_bodies(sim: Res<Sim>, mut bodies: Query<(&Body, &mut Transform)>) {
         let Some(f) = sim.0.fighters.get(*i) else { continue };
         set_ne!(tf.translation.x, (f.x / PX) as f32);
         set_ne!(tf.translation.y, GROUND_Y + (f.y / PX) as f32);
-        tf.scale.x = f.heading as f32;
+        set_ne!(tf.scale.x, f.heading as f32);
     }
 }
 
@@ -565,7 +553,7 @@ pub fn animate_ravens(
                 }
                 set_ne!(tf.translation.x, (r.x / PX) as f32);
                 set_ne!(tf.translation.y, GROUND_Y + (r.y / PX) as f32);
-                tf.scale.x = r.facing as f32;
+                set_ne!(tf.scale.x, r.facing as f32);
                 set_ne!(*visibility, Visibility::Inherited);
             }
             None => set_ne!(*visibility, Visibility::Hidden),
@@ -904,7 +892,7 @@ pub fn animate_skill_bar(
     slots: Res<crate::ControllerSlots>, activity: Res<crate::InputActivity>, pads: Query<(&Gamepad, Option<&Name>)>,
     mut pieces: Query<(&SkillPiece, &mut Sprite, &mut Transform, &mut Visibility)>,
     mut texts: Query<(&SkillText, &mut Text2d, &mut Visibility), Without<SkillPiece>>,
-    mut images: Local<HashMap<String, Handle<Image>>>,
+    mut images: Local<HashMap<(usize, usize, u8, usize, u8), Handle<Image>>>,
 ) {
     use t2f::sim::{Button, Input};
     let local = matches!(*mode, crate::Mode::LocalVersus | crate::Mode::LocalTeams);
@@ -931,38 +919,54 @@ pub fn animate_skill_bar(
         let available = !(cooling || raven || meter || resting || f.silenced > 0 || (f.bat_form > 0 && button != Button::Heavy));
         (available, frames, shade)
     };
+    // each slot's state and each player's controller family are worked out once a frame, not once per piece
+    let mut states = [[None; 3]; 4];
+    let mut families = [None; 4];
+    for p in 0..families.len().min(sim.0.fighters.len()) {
+        families[p] = family(p);
+    }
     for (piece, mut sprite, mut tf, mut visibility) in &mut pieces {
-        let (available, _, shade) = state(piece.player, piece.slot);
-        let f = &sim.0.fighters[side(piece.player)];
-        let data = &roster.0[sel.chars[side(piece.player)]];
-        *visibility = Visibility::Inherited;
-        let path = match piece.role {
-            SkillRole::Icon => {
-                let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
-                let name = match piece.slot { 1 if f.bat_form > 0 => "poof", 1 if f.bat_ready > 0 => "bat", k => ["light", "heavy", "special"][k] };
-                Some(format!("icons/{folder}/{name}.png"))
-            }
-            SkillRole::Prompt => match family(piece.player) {
-                Some(family) => Some(format!("ui/controls/{family}_{}.png", ["light", "heavy", "ultimate"][piece.slot])),
-                None => { *visibility = Visibility::Hidden; None }
+        let (available, _, shade) = *states[piece.player][piece.slot].get_or_insert_with(|| state(piece.player, piece.slot));
+        let who = side(piece.player);
+        let f = &sim.0.fighters[who];
+        let data = &roster.0[sel.chars[who]];
+        set_ne!(*visibility, Visibility::Inherited);
+        // which picture, as (kind, variant); the path is only built the first time one is seen
+        let wanted = match piece.role {
+            SkillRole::Icon => Some((0u8, match piece.slot { 1 if f.bat_form > 0 => 1u8, 1 if f.bat_ready > 0 => 2, _ => 0 })),
+            SkillRole::Prompt => match families[piece.player] {
+                Some(family) => Some((1u8, (family == "xbox") as u8)),
+                None => { set_ne!(*visibility, Visibility::Hidden); None }
             },
-            SkillRole::Glow => { sprite.color = Color::srgba(1.0, 0.85, 0.3, if available && piece.slot == 2 { 0.55 + 0.45 * (time.elapsed_secs() * 7.0).sin() } else { 0.0 }); None },
+            SkillRole::Glow => { set_ne!(sprite.color, Color::srgba(1.0, 0.85, 0.3, if available && piece.slot == 2 { 0.55 + 0.45 * (time.elapsed_secs() * 7.0).sin() } else { 0.0 })); None },
             SkillRole::Shade => {
-                *visibility = if available { Visibility::Hidden } else { Visibility::Inherited };
-                sprite.color = Color::srgba(0.04, 0.04, 0.07, 0.74);
+                set_ne!(*visibility, if available { Visibility::Hidden } else { Visibility::Inherited });
+                set_ne!(sprite.color, Color::srgba(0.04, 0.04, 0.07, 0.74));
                 let h = SKILL_SIZE * shade;
-                sprite.custom_size = Some(Vec2::new(SKILL_SIZE, h));
-                tf.translation.y = piece.y + SKILL_SIZE / 2.0 - h / 2.0;
+                set_ne!(sprite.custom_size, Some(Vec2::new(SKILL_SIZE, h)));
+                set_ne!(tf.translation.y, piece.y + SKILL_SIZE / 2.0 - h / 2.0);
                 None
             }
         };
-        if let Some(path) = path { sprite.image = images.entry(path.clone()).or_insert_with(|| assets.load(path)).clone(); }
+        if let Some((kind, variant)) = wanted {
+            let key = (sel.chars[who], piece.player, kind, piece.slot, variant);
+            let image = images.entry(key).or_insert_with(|| {
+                assets.load(if kind == 0 {
+                    let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
+                    let name = match (piece.slot, variant) { (1, 1) => "poof", (1, 2) => "bat", (k, _) => ["light", "heavy", "special"][k] };
+                    format!("icons/{folder}/{name}.png")
+                } else {
+                    format!("ui/controls/{}_{}.png", if variant == 1 { "xbox" } else { "ps" }, ["light", "heavy", "ultimate"][piece.slot])
+                })
+            });
+            if sprite.image != *image { sprite.image = image.clone(); }
+        }
     }
     for (label, mut text, mut visibility) in &mut texts {
-        let (_, frames, _) = state(label.player, label.slot);
-        let keyboard = label.player == 0 && family(0).is_none();
+        let (_, frames, _) = *states[label.player][label.slot].get_or_insert_with(|| state(label.player, label.slot));
+        let keyboard = label.player == 0 && families[0].is_none();
         let value = if label.timer { if frames > 0 { format!("{:.1}", frames as f32 / 60.0) } else { String::new() } } else if keyboard { crate::settings::key_name(settings.key([Input::LIGHT, Input::HEAVY, Input::SPECIAL][label.slot])) } else { String::new() };
-        *visibility = if value.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+        set_ne!(*visibility, if value.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
         if text.0 != value { text.0 = value; }
     }
 }
@@ -1077,6 +1081,7 @@ pub fn spawn_portals(commands: &mut Commands, asset_server: &AssetServer, fighte
 /// hand out of the far one during the grab (holding on if it caught them). Both close once she is out.
 pub fn animate_portals(
     mut start: Local<[f32; 4]>,
+    mut gate_images: Local<HashMap<(usize, usize), Handle<Image>>>,
     sim: Res<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
@@ -1114,9 +1119,16 @@ pub fn animate_portals(
         let size = (age / 6.0).min(1.0).min(left / 6.0).max(0.1);
         set_ne!(tf.translation.x, x);
         set_ne!(tf.translation.y, GROUND_Y + 22.0);
-        tf.scale = Vec3::new(size, size, 1.0);
-        let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
-        sprite.image = asset_server.load(format!("sprites/{folder}/gate_{}.png", (sim.0.frame / 5) % 2));
+        set_ne!(tf.scale, Vec3::new(size, size, 1.0));
+        // (the two drawings of each character's gate are loaded once)
+        let variant = ((sim.0.frame / 5) % 2) as usize;
+        let image = gate_images.entry((sel.chars[*i], variant)).or_insert_with(|| {
+            let folder = data.sprites.clone().unwrap_or_else(|| data.name.to_lowercase());
+            asset_server.load(format!("sprites/{folder}/gate_{variant}.png"))
+        });
+        if sprite.image != *image {
+            sprite.image = image.clone();
+        }
     }
     for (HandOf(i), mut sprite, mut tf, mut visibility) in &mut hands {
         let Some(f) = sim.0.fighters.get(*i) else { continue };
@@ -1136,7 +1148,7 @@ pub fn animate_portals(
         let reach = if frame <= mv.startup { (frame + 8 - mv.startup) as f32 * 0.8 } else { 6.0 + (frame - mv.startup).min(4) as f32 * 4.0 };
         set_ne!(tf.translation.x, (x / PX) as f32 + f.facing as f32 * reach);
         set_ne!(tf.translation.y, GROUND_Y + 30.0);
-        tf.scale.x = f.facing as f32;
+        set_ne!(tf.scale.x, f.facing as f32);
         set_ne!(sprite.color, Color::WHITE);
     }
 }
@@ -1336,7 +1348,7 @@ pub fn animate_minions(
                 }
             }
         }
-        sprite.flip_x = m.facing < 0;
+        set_ne!(sprite.flip_x, m.facing < 0);
         // a goblin is drawn at 1x (32 x 24, feet on the bottom row); an agent like a fighter (84 x 63, body centre left of
         // the middle, feet on the bottom row)
         let shift = if m.agent { (FRAME_W as f32 / 2.0 - t2f::anim::CENTRE_X as f32) * m.facing as f32 } else { 0.0 };
@@ -1473,16 +1485,16 @@ pub fn animate_team_markers(sim: Res<Sim>, roster: Res<Roster>, sel: Res<Selecti
             let mut stem = frame.file_stem();
             if sim.0.ravens[marker.player].active { stem.push_str("_nr"); }
             if let Some(image) = handles.0[marker.player].get(&stem) { sprite.image = image.clone(); }
-            sprite.color = player_glow(marker.player).with_alpha(0.55);
+            set_ne!(sprite.color, player_glow(marker.player).with_alpha(0.55));
             let shift = (FRAME_W as f32 / 2.0 - t2f::anim::CENTRE_X as f32) * f.heading as f32;
             tf.translation = (feet + Vec2::new(shift, FULL_H as f32 / 2.0) + marker.offset).extend(0.8);
-            tf.scale.x = f.heading as f32;
+            set_ne!(tf.scale.x, f.heading as f32);
         } else {
             let direction = Vec2::new((enemy.x - f.x) as f32, (enemy.y - f.y) as f32).normalize_or_zero();
             let angle = direction.y.atan2(direction.x);
             let rotation = Quat::from_rotation_z(angle);
             let offset = rotation * marker.offset.extend(0.0);
-            sprite.color = player_glow(target);
+            set_ne!(sprite.color, player_glow(target));
             tf.translation = (feet + Vec2::new(0.0, 72.0)).extend(8.0) + offset;
             tf.rotation = rotation;
         }

@@ -79,16 +79,27 @@ struct Sounds {
     frames: HashMap<String, Vec<u32>>,
 }
 
-/// The length of a WAV file in frames of 60 a second (0 if it can't be read).
+/// The length of a WAV file in frames of 60 a second (0 if it can't be read). Only the chunk headers are read, not the
+/// sound itself.
 fn wav_frames(path: &std::path::Path) -> u32 {
-    let Ok(bytes) = std::fs::read(path) else { return 0 };
-    let u32_at = |i: usize| bytes.get(i..i + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u64);
-    let (mut at, mut bytes_per_second, mut data_len) = (12, 0, 0);
-    while at + 8 <= bytes.len() {
-        let len = u32_at(at + 4) as usize;
-        match &bytes[at..at + 4] {
-            b"fmt " => bytes_per_second = u32_at(at + 12),
-            b"data" => data_len = len.min(bytes.len() - at - 8) as u64,
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return 0 };
+    let Ok(total) = file.metadata().map(|m| m.len()) else { return 0 };
+    let (mut at, mut bytes_per_second, mut data_len) = (12u64, 0u64, 0u64);
+    while at + 8 <= total {
+        let mut head = [0u8; 16];
+        if file.seek(SeekFrom::Start(at)).is_err() {
+            return 0;
+        }
+        let read = file.read(&mut head).unwrap_or(0);
+        if read < 8 {
+            break;
+        }
+        let u32_at = |i: usize| if i + 4 <= read { u32::from_le_bytes([head[i], head[i + 1], head[i + 2], head[i + 3]]) as u64 } else { 0 };
+        let len = u32_at(4);
+        match &head[..4] {
+            b"fmt " => bytes_per_second = u32_at(12),
+            b"data" => data_len = len.min(total - at - 8),
             _ => {}
         }
         at += 8 + len + (len & 1);
@@ -602,5 +613,34 @@ mod tests {
         cry(&mut world, &mut voice, &sounds, "voice_x_jump", 5, 90);
         assert_eq!(sounding(&world, &voice), 1);
         assert_eq!(voice.attack[0][0].1, "voice_x_jump");
+    }
+
+    /// Reading only the headers gives the same length as reading the whole file.
+    #[test]
+    fn a_wavs_length_is_read_from_its_headers() {
+        let whole = |path: &std::path::Path| -> u32 {
+            let bytes = std::fs::read(path).unwrap();
+            let u32_at = |i: usize| bytes.get(i..i + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u64);
+            let (mut at, mut rate, mut data) = (12, 0, 0);
+            while at + 8 <= bytes.len() {
+                let len = u32_at(at + 4) as usize;
+                match &bytes[at..at + 4] {
+                    b"fmt " => rate = u32_at(at + 12),
+                    b"data" => data = len.min(bytes.len() - at - 8) as u64,
+                    _ => {}
+                }
+                at += 8 + len + (len & 1);
+            }
+            if rate == 0 { 0 } else { (data * 60 / rate) as u32 }
+        };
+        let mut seen = 0;
+        for entry in std::fs::read_dir("assets/sfx").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "wav") {
+                assert_eq!(wav_frames(&path), whole(&path), "{}", path.display());
+                seen += 1;
+            }
+        }
+        assert!(seen > 50, "found {seen} sounds");
     }
 }

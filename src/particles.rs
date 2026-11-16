@@ -813,8 +813,12 @@ pub fn update_particles(
         if sprite.custom_size != side {
             sprite.custom_size = side;
         }
+        // (it only starts to fade in its second half)
+        let alpha = (t * 2.0).min(1.0);
         let c = sprite.color.to_srgba();
-        sprite.color = Color::srgba(c.red, c.green, c.blue, (t * 2.0).min(1.0));
+        if c.alpha != alpha {
+            sprite.color = Color::srgba(c.red, c.green, c.blue, alpha);
+        }
     }
     for (entity, mut pop, mut tf, mut color) in &mut pops {
         pop.life -= dt;
@@ -826,7 +830,10 @@ pub fn update_particles(
         tf.translation.y += pop.vel.y * dt;
         let t = pop.life / pop.max;
         tf.scale = Vec3::splat(1.0 + (1.0 - t) * 0.4);
-        color.0 = Color::srgba(pop.rgb[0], pop.rgb[1], pop.rgb[2], (t * 2.0).min(1.0));
+        let alpha = (t * 2.0).min(1.0);
+        if color.0.alpha() != alpha {
+            color.0 = Color::srgba(pop.rgb[0], pop.rgb[1], pop.rgb[2], alpha);
+        }
     }
     shake.0 = (shake.0 - 18.0 * dt).max(0.0);
 }
