@@ -1,15 +1,11 @@
-// Gray Persona: a pale vampire in a black gothic dress with teal cuffs, long dark hair and a ruby brooch.
-// Light: a nail scratch that switches arms while you spam it. The third hit of a combo (the eyeless face) rakes with
-//        both hands and bites with two fangs; if it lands, blood flies out of the enemy and heals her 3%, but her lights rest for a second.
-// Heavy: she hops back, lifts her arms and sprays a short burst of bats forward from her outstretched hands (they can't be blocked, and once she has pressed it nothing interrupts it). If they land, heavy again (until its cooldown is over) turns her
-//        into a bat: faster, but no lights or specials. Heavy once more (or 3 seconds later by itself) she turns back
-//        in a puff of grey smoke that stuns anyone close for a second. The heavy then rests 4 seconds, or 6 if the
-//        smoke stunned. Being hit as a bat turns her back without the smoke.
-// Special (the brooch glows when the meter is full): a portal opens behind her and she leaps back into it, then one
-//        opens right behind the enemy and drags them towards it while a hand reaches out to grab (walking away is not enough; roll through it). If it holds, the enemy is
-//        stuck while she comes out and bites, healing 10%.
-// Drawings come from `python tools/gen_gray_persona.py`. See ayz.ron for what each field means; heal_pct and
-// portal are explained in src/sim/data.rs.
+// Gray Persona: a pale vampire in a black gothic dress with teal cuffs and a ruby brooch.
+// Light: nail scratches (the arms alternate); the third hit rakes and bites, healing her 3% (then her lights rest for 1 s).
+// Heavy: a spray of bats that can't be blocked or interrupted. If they land, heavy again turns her into a bat (fast, no
+//        lights or specials); once more, or after 3 s, she turns back in a smoke puff that stuns anyone close.
+// Special (the brooch glows when the meter is full): she leaps into a portal; another opens behind the enemy and drags them
+//        in while a hand grabs. If it holds she comes out and bites, healing 10%.
+// Drawings come from `python tools/gen_gray_persona.py`. See ayz.ron for what each field means; heal_pct and portal are in
+// src/sim/data.rs.
 (
     name: "Gray Persona",
     subtitle: Some("gaypersona"),

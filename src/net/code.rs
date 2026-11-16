@@ -1,7 +1,6 @@
-//! Player codes: an address (IPv4 and port) written as a short code to send a friend, like `K7QH-2M9X-RT4C`,
-//! instead of the bare address. The six bytes are scrambled with a fixed key and a checksum is added, so the
-//! code doesn't read as an address and a mistyped one is caught. The letters skip I and O (and the digits 0
-//! and 1) so nothing can be misread.
+//! Player codes: an address (IPv4 and port) as a short code to send a friend, like `K7QH-2M9X-RT4C`. The six bytes are
+//! scrambled with a fixed key plus a checksum, so it doesn't read as an address and a typo is caught. The letters skip I
+//! and O (and the digits 0 and 1) so nothing is misread.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 

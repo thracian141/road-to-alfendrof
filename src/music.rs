@@ -1,7 +1,6 @@
-//! Music. In the menus `assets/music/menu.wav` plays from the start once (the buildup), then loops `loop_start` to
-//! `loop_end` seamlessly; the echo after `loop_end` is mixed over the start of each repeat instead of played as
-//! a gap. From the countdown of a fight until it is left, `assets/music/generic.wav` loops instead; the menu song
-//! comes back, without the buildup, in the menus after it.
+//! Music. In the menus `assets/music/menu.wav` plays once from the start, then loops `loop_start` to `loop_end`
+//! seamlessly (the echo after `loop_end` is mixed over the start of each repeat). In a fight `generic.wav` loops instead;
+//! the menu song comes back, without the buildup, afterwards.
 
 use std::num::NonZero;
 use std::sync::Arc;

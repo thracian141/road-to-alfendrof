@@ -1,13 +1,10 @@
-//! Fight sound effects from `assets/sfx`. Works like the particles: it watches both fighters, the projectiles
-//! and the minions between sim ticks, so the sim stays free of anything audio.
+//! Fight sound effects from `assets/sfx`. Like the particles, it watches the fighters, projectiles and minions between
+//! sim ticks, so the sim stays free of audio.
 //!
-//! Sounds are found by name: `assets/sfx/<name>.wav`, or several `<name>_0.wav`, `<name>_1.wav`... to pick from.
-//! Every move can name its own in the character's .ron (`sfx: (cast, launch, hit, block)`, see `MoveSfx`); what it
-//! leaves out falls back to a generic sound for its button, or for how hard the hit was.
-//!
-//! Generic names: `whoosh_light`, `whoosh_heavy`, `hit_small`, `hit_large`, `hit_heavy`, `block_small`,
-//! `block_large`, `ko`, `smash`. Movement: `jump`, `jump_double`, `land`, `dash`, `roll`, `step`, `guard`,
-//! `guard_break`. Match: `round_start`, `round_end`, `match_win`. Menus: `ui_move`, `ui_confirm`, `ui_back`.
+//! A sound is `assets/sfx/<name>.wav`, or several `<name>_0.wav`, `<name>_1.wav`... to pick from. A move names its own in
+//! its .ron (`sfx: (cast, launch, hit, block)`, see `MoveSfx`); what it leaves out falls back to a generic sound for its
+//! button or the hit's strength (`whoosh_*`, `hit_*`, `block_*`, `ko`, `smash`), and there are movement, match and menu
+//! sounds too (`jump`, `land`, `dash`, `roll`, `step`, `guard`, `round_start`, `ui_move`...).
 
 use std::collections::HashMap;
 

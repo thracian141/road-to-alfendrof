@@ -4,8 +4,7 @@ use super::input::Input;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Phase {
-    /// Before the match: the fighters' skills are shown until both players are ready. The number has a bit
-    /// set for each player who is (bit 0 = player 0).
+    /// Before the match, on the skills screen, until both players are ready. One bit per player who is (bit 0 = player 0).
     Briefing(u8),
     /// The grace period before a round: the number is the frames gone (see `COUNTDOWN_FRAMES`). Nobody can act.
     Countdown(u32),
@@ -3117,7 +3116,7 @@ mod tests {
     #[test]
     fn without_the_block_button_nothing_is_blocked() {
         let mut s = close_up();
-        // Holding away used to block; now only the block button does.
+        // only the block button blocks
         step(&mut s, Input::LIGHT, Input::RIGHT);
         for _ in 0..10 {
             step(&mut s, 0, Input::RIGHT);
@@ -3508,7 +3507,7 @@ mod tests {
                 }
             }
         }
-        // it used to be a coin flip (about 30 of 60); now it goes for them most of the time, but not always
+        // it goes for them most of the time, but not always
         assert!((40..60).contains(&ducked_hit), "a crouching enemy was hit {ducked_hit} of 60");
         assert!((40..60).contains(&aimed_over_jumper), "the lash went high for a jumper {aimed_over_jumper} of 60");
     }
@@ -4492,7 +4491,7 @@ mod tests {
             last = (if f.state == FighterState::Attack { f.attack } else { usize::MAX }, f.state_frame);
         }
         assert!(throws.len() >= 6, "two groups at least, got {throws:?}");
-        // three in a row, a few frames apart (the old volley took 25 frames for three)
+        // three in a row, a few frames apart
         assert!(throws[2] - throws[0] <= 24, "the first three came fast: {throws:?}");
         // then the reload, then three more
         assert!(throws[3] - throws[2] >= 20, "a reload after the third: {throws:?}");
@@ -5074,7 +5073,7 @@ mod tests {
         let g = gray_persona();
         let heavy = &g.moves[g.find_move(Button::Heavy, false, false).unwrap()];
         let p = heavy.projectile.as_ref().unwrap();
-        // a short way: it used to fly 80 frames at 4 px (320 px)
+        // a short way
         assert!(p.lifetime as i32 * p.speed <= 200, "range {} px", p.lifetime as i32 * p.speed);
         assert!(heavy.volley >= 6 && p.fan > 0 && p.size.0 < 20, "several small bats");
         let mut s = GameState::new();

@@ -1,16 +1,11 @@
-// Anaran, Arch-Historian: a pompous high elf in red and copper robes with a black cape and dark crimson hair. A ranged fighter.
-// Light: he opens a scroll and reads for as long as you hold the button (no combos). Each time he opens it he reads one of six
-//        spells (the golden fireball, or the black sun, blood, lightning, fire or water), never the same one twice in a row;
-//        his chant of it plays while he reads. While he reads, a heat-seeking
-//        missile leaves the scroll after 0.6 seconds of reading and then one every 0.75 seconds; it curves after the enemy and detonates
-//        when it is close. He can walk or crouch while he reads (on the ground only), and being hit stops it. If three of
-//        his missiles are blocked (without one getting through in between) he is stunned for 1.2 seconds.
-// Heavy: he slams his staff on the ground (a quick cast, a 3.5 second cooldown that shows as a bar under him, and the screen shakes): a magical shockwave around him (both sides) damages and shoves the enemy
-//        away and leaves them unable to attack for 1.5 seconds (unless they block it). Jump over it. It also destroys the
-//        enemy's projectiles in its reach (except melee ones).
-// Special (the ruby at his throat glows when the meter is full): four goblins that swarm the enemy and bite until they're killed or time out.
-// Air: the scroll whip and the plunging verdict are as they were.
-// See ayz.ron for what each field means; `channel`, `radial`, `silence` and the `homing` projectile fields are explained in src/sim/data.rs.
+// Anaran, Arch-Historian: a pompous high elf in red and copper robes. A ranged fighter.
+// Light: hold to read a scroll (one of six spells, never the same twice running). A heat-seeking missile leaves it after
+//        0.6 s, then one every 0.75 s. He can walk or crouch while reading; a hit stops it, and three blocked missiles
+//        in a row stun him.
+// Heavy: a staff slam: a shockwave all round him that shoves the enemy back, stops their attacks for 1.5 s (unless
+//        blocked) and destroys their shots. Jump over it.
+// Special (the ruby glows when the meter is full): four goblins swarm the enemy and bite until killed or timed out.
+// See ayz.ron for what each field means; `channel`, `radial`, `silence` and the `homing` fields are in src/sim/data.rs.
 (
     name: "Anaran",
     // shown under his name in the character select only

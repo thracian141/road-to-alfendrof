@@ -1,5 +1,4 @@
-// Negaprofessor (Evilayz): the dark mirror. The Professor in negative colours (white hair, black shirt, blue trousers),
-// slower and heavier-hitting. He uses the same drawings as Ayz, inverted.
+// Test fixture: Negaprofessor, the Professor in negative colours (slower and heavier-hitting).
 (
     name: "Negaprofessor",
     subtitle: Some("Alfendrof..."),

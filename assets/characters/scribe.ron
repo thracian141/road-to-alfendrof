@@ -3,7 +3,7 @@
 //        hurts and makes them bleed, and gives him plot armour for 2.5 s.
 // Heavy: a portal opens over the enemy and knives pour out; up close a sperm whale rises from a pool and bites.
 // Special: "... then Jesus appeared": a beam of light sweeps across where the enemy stood.
-// See ayz.ron for what each field means; `sparks`, `beam` and the lob fields are explained in src/sim/data.rs.
+// See ayz.ron for what each field means; `sparks`, `beam` and the lob fields are in src/sim/data.rs.
 (
     name: "The Scribe",
     subtitle: Some("Author of many-a-fanfic"),

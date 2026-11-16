@@ -1,18 +1,11 @@
-// Cowboy From Hell: completely bald under a cowboy hat, a dark brown ribbed tank top, silver chain and earrings, grey
-// jeans, big brown cowboy boots with spurs and a whale tattoo on his left arm.
-// Light: the Gunslinger's lights (a finger-gun shot, a low slap, an aimed shot in the air). The combo is two shots and
-//        then a lasso that pulls the opponent in a little and stuns them. His shots reach about 300 px (50 frames at 6 px).
-// Heavy: he fires both finger guns at the ground (the splash hurts anyone close), the recoil launches him up, and at the
-//        top (three times as high as before, then he floats down slowly) he shoots four quick bullets (half as strong as the
-//        Gunslinger's) at the floor where the enemy will be, never at the body, so the enemy can still jump them; any two
-//        that land, blocked or not, break the guard. He can
-//        use it while being hit to get out of a combo, but not out of a long stun (40 frames or more) or a hold.
-// Special: he throws his hat. It sits on his head the whole fight and glows once the meter is full. It is gone while
-//        the throw itself recharges. Where it lands it puts the curse on the opponent: a glowing blue ring split into a
-//        left and a right half. Hitting them with any other attack from the left removes the left half, from the right
-//        the right half; with both gone the ring squeezes shut and deals the special's damage.
-// Shooting in the air leans him back (air_shot_tilt: separate drawings, three stages of the lean).
-// See ayz.ron for what each field means; leap / leap_vx / radial / volley_delay / shot_damage / curse are explained in
+// Cowboy From Hell: bald under a hat, tank top, chain, a whale tattoo. Shoots with finger guns.
+// Light: finger-gun shots (an aimed one in the air); the combo is two shots, then a lasso that pulls the enemy in a
+//        little and stuns them.
+// Heavy: fires at the ground and is launched up, floats down slowly and shoots four bullets at the floor where the enemy
+//        will be, so jumping dodges them; two landing break a guard. Usable while being hit (not out of a long stun).
+// Special: throws his hat, which curses the enemy with a ring in two halves. Hit them from the left to break the left half,
+//        from the right for the right one; with both gone the ring squeezes shut for the special's damage.
+// See ayz.ron for what each field means; leap, leap_vx, radial, volley_delay, shot_damage and curse are in
 // src/sim/data.rs.
 (
     name: "Cowboy From Hell",

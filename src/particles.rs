@@ -1,6 +1,5 @@
-//! Hit sparks, dust, swing streaks, charge sparkles, star trails and screen shake. Only drawn, never part of
-//! the simulation: `emit` watches how the state changed since the last tick and `update_particles` moves
-//! and fades them every frame.
+//! Hit sparks, dust, swing streaks, charge sparkles, star trails and screen shake. Only drawn, never part of the
+//! simulation: `emit` watches how the state changed since the last tick, `update_particles` moves and fades them.
 
 use bevy::prelude::*;
 use t2f::sim::{AnimKind, Fighter, FighterState, SpellData, SpellMotion, PX};

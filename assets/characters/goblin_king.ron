@@ -1,17 +1,13 @@
-// The Goblin King: a scrappy close-range brawler who claws gold out of whoever he hits, then spends it on goblins.
-// Drawings come from `python tools/gen_goblin_king_sprites.py` (posed from tools/goblin_king_art.png).
-//
-// Light: he flails at the enemy with a random limb each time (a scratch with either hand, a slap of either foot; never
-//        the same one twice running). The third hit of a combo (the finisher) is a bite: a little leap at them, jaws first.
-// Heavy: hold to charge, crouched; let go and he pounces right at the enemy (aimed to come down on them, steering after them
-//        in the air, up to about 180 px away; only a double jump gets out from under it) and clings to them (`latch`), clawing with both
-//        hands. If they didn't block they are stunned for as long as he clings, longer the longer it charged; if they
-//        blocked he gets three scratches in and drops off. He can't be hit while he clings. Barely charged, it is an
-//        ordinary hit that can be blocked.
-// Special: his meter is the gold he has clawed out (`gold_meter`). He throws four coins in arcs that land around the
-//        enemy (`coin`); one that hits them on the way hurts. A coin on the ground calls up a goblin when they step on it,
-//        and it goes for them (`from_coins`).
-// See ayz.ron for what each field means; latch, coin and from_coins are explained in src/sim/data.rs.
+// The Goblin King: a scrappy brawler who claws gold out of whoever he hits, then spends it on goblins.
+// Drawings come from `python tools/gen_goblin_king_sprites.py`.
+// Light: flails with a random limb each time (never the same twice running); the kicks carry him forward. The third hit
+//        is a bite.
+// Heavy: hold to charge, let go to pounce right at the enemy and cling on, clawing (`latch`). Stuns unless they blocked
+//        (then three scratches); longer charge, longer cling. A barely charged one is a plain blockable hit. He can't be
+//        hit while pouncing or clinging.
+// Special: the gold meter is spent on coins thrown round the enemy (`coin`); one that hits in the air hurts, and one
+//        stepped on calls up a goblin that runs at them (`from_coins`).
+// See ayz.ron for what each field means; latch, coin and from_coins are in src/sim/data.rs.
 (
     name: "Goblin King",
     subtitle: Some("Czar of the goblin minority"),

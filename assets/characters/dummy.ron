@@ -1,6 +1,5 @@
-// The Training Dummy: a straw-stuffed sack on a post with a target on its chest. As the CPU it never moves or attacks:
-// it just stands there and takes hits, and gets knocked about by them. A player can pick it too, as a joke: it hops
-// about and its "attacks" are flops of its straw arms that do no damage.
+// The Training Dummy: a straw-stuffed sack on a post. As the CPU it never acts and can't be worn down (no health bar, no
+// clock); it only moves when an attack moves it. A player can pick it as a joke: it hops about and its flops do no damage.
 // Drawings come from `python tools/gen_dummy.py`.
 (
     name: "Training Dummy",

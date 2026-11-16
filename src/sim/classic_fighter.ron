@@ -1,17 +1,12 @@
-// The Professor (Ayz): the all-rounder. A big man with long black hair and a bald top, glasses and a moustache,
-// in a tight white shirt and orange trousers. Evilayz is the same drawings in negative colours.
-//
-// anim picks the drawings: Soft (2), Hard (4) or Summon (6); crouching moves use crouching drawings.
-// air: true = used in the air (Light/Heavy while jumping, once per jump).
-// charge_frames: hold the button at the end of the startup to charge, up to this many frames;
+// Test fixture: the Professor's old move set (also the base of Negaprofessor's, see classic_opponent.ron).
+// anim: which drawings the move uses (Soft 2, Hard 4, Summon 6); crouching moves use crouching drawings.
+// air: used in the air (Light/Heavy while jumping, once per jump).
+// charge_frames: hold the button at the end of the startup to charge, up to this many frames.
 // walk_pct: percent of walk speed kept while the move plays (0 = rooted).
-// hitbox: x = distance in front of the body centre, y = height above the feet, in pixels.
-//   A width of 0 means no melee hit (the Summon).
+// hitbox: x = distance in front of the body centre, y = height above the feet, in pixels; width 0 means no melee hit.
 // guard_hits: blocked hits needed to break a guard (default: never for Light, 1 otherwise).
-// lob: the projectile comes from the moon (hung in the sky where the move was started) and
-//   lands where the opponent stood, splashing splash_radius pixels around.
-// projectile: launched on the first active frame, aimed at the opponent. x, y = where it
-//   appears (the crescent above his head), aim_y = height on the opponent it flies to.
+// lob: the projectile falls from the moon and splashes `splash_radius` pixels round where the opponent stood.
+// projectile: launched on the first active frame; x, y = where it appears, aim_y = height on the opponent it flies to.
 // Fighters are about 55 px tall and 34 px wide.
 (
     name: "The Professor",

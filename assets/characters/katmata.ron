@@ -1,19 +1,11 @@
-// Katmata, The Crepe: a man in a green cap, a white tee and blue jeans with a lit cigarette in his mouth.
-// He carries five cigarettes (the lit one and four in a pack on his belt) and rolls a new one every second while he
-// isn't fighting; the row under his health bar shows how many are left.
-// Light: a combo of three. He flicks the lit cigarette at the enemy twice (each costs one), then takes another from
-//        the pack, puts it in his mouth and lights it. The third light is an iced latte thrown at them: a bit of
-//        damage, and it spills where it lands. Anyone but him standing on the spill for the next two seconds has their
-//        controls reversed (left and right, up and down, the rolls). With no cigarettes left he flicks his lighter at
-//        them instead.
-// Heavy: he opens a laptop and codes for almost a second, and a large glitched area appears around the enemy for five
-//        seconds: inside it they move at a third of their speed, can't block, do half damage, and lose a little health (4 every
-//        third of a second). Four seconds of
-//        cooldown: from the cast if it never lands, or from when the zone ends if it does.
-// Special (the ember of his cigarette glows when the meter is full): two robot sub-agents fight for him. They walk up,
-//        dash in from a distance, throw a pair of punches, then roll away or through. One light attack kills one; a ground pound doesn't.
-// See ayz.ron for what each field means; `cigarettes`, `cig_cost` and `out_of_cigs`, `zone` and the minion field
-// `agent` are explained in src/sim/data.rs.
+// Katmata, The Crepe: a man in a green cap and blue jeans with a lit cigarette. He carries five and rolls a new one every
+// second while not fighting (the row under his health bar).
+// Light: flicks the cigarette twice (one each), lights another, then throws an iced latte that spills: whoever else stands
+//        in it has reversed controls for 2 s. Out of cigarettes he flicks his lighter.
+// Heavy: codes on a laptop, then a glitched area covers the enemy for 5 s: a third of their speed, no blocking, half
+//        damage, and a little health lost every third of a second.
+// Special (the ember glows when the meter is full): two robot sub-agents fight for him; one light kills one.
+// See ayz.ron for what each field means; `cigarettes`, `cig_cost`, `out_of_cigs`, `zone` and `agent` are in src/sim/data.rs.
 (
     name: "Katmata",
     // shown under his name in the character select only

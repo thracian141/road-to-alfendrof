@@ -1,19 +1,10 @@
-// The Professor (Ayz): a ranged fighter with a raven on his shoulder. A big man with long black hair, a bald top,
-// glasses and a moustache, in a tight white shirt and orange trousers. Evilayz is the same drawings in negative colours.
-//
-// Light: he speaks at the enemy, "uh" then "meh" (each word flies out, a short way, and hits); the third hit of the combo is
-//        the raven flying in to claw them. If the raven is away the combo starts again with a word. Crouching Light is
-//        a low word, in the air a word aimed at the opponent. Up close (within 56 px) the light is a kick instead: two
-//        kicks, and if both land the third is the slam dunk: he takes the enemy by the shoulders (they are held), pushes
-//        himself up saying "remember...", jumps, dunks a basketball on them, and says "... taller is the top". (Every light
-//        does 15% less than it used to.)
-// Heavy: "Here's the Thing...": if the enemy is in range he pulls them in, grabs them by the collar and says it,
-//        then shoves them away for the damage.
-// Special (the scar glows when the meter is full): the raven flies after the enemy wherever they are and pecks
-//        them three times (left, right, left), then flies back home (no rose, no healing).
-//
-// See cowboy.ron / junkhead.ron for the whip and pull fields, and src/sim/data.rs for combo_step, raven,
-// raven_move and hit_overrides.
+// The Professor (Ayz): a ranged fighter with a raven on his shoulder. Evilayz has the same drawings in negative colours.
+// Light: "uh" then "meh", words that fly out and hit; the third hit is the raven clawing them. Up close (within 56 px)
+//        it is two kicks and then a slam dunk instead.
+// Heavy: "Here's the Thing...": pulls the enemy in by the collar, says it, then shoves them away.
+// Special (the scar glows when the meter is full): the raven chases the enemy anywhere, pecks three times, flies home.
+// See cowboy.ron / junkhead.ron for the whip and pull fields, and src/sim/data.rs for combo_step, raven, raven_move
+// and hit_overrides.
 (
     name: "The Professor",
     subtitle: Some("Probably not a real professor..."),

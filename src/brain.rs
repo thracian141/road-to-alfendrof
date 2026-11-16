@@ -1,9 +1,8 @@
-//! A CPU that looks ahead. Every few frames it tries a handful of things it could do (step in, step out, block, each
-//! attack, jump, roll, dash, or just carry on with the rules in `cpu.rs`), plays each one out in a copy of the match against
-//! guesses of what the player does next, and does whichever comes out best. The guesses are weighed by what this player
-//! has done in the same situation before (see `habits.rs`: it learns what follows what, and what they do against what it
-//! does), and it keeps an eye on its own habits too, so it doesn't repeat itself into being easy to read. It reacts like a
-//! person: an attack they have only just started isn't seen for a few frames.
+//! A CPU that looks ahead. Every few frames it plays out a handful of things it could do (step in or out, block, each
+//! attack, jump, roll, dash, or carry on with the rules in `cpu.rs`) in a copy of the match, against guesses of what the
+//! player does next, and picks the best. The guesses come from what this player did in the same situation before (see
+//! `habits.rs`), and it watches its own habits too so it isn't easy to read. It reacts like a person: an attack that has
+//! only just started isn't seen for a few frames.
 
 use std::collections::VecDeque;
 

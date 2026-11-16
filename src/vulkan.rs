@@ -1,11 +1,9 @@
-//! Sorting out Vulkan on the PCs where it doesn't start.
+//! Gets Vulkan going on the PCs where it doesn't start.
 //!
-//! The game draws with Vulkan where it can. On some Windows PCs, laptops with two graphics chips above all, an optional layer
-//! the graphics drivers install (the switching between the chips, an overlay) makes Vulkan fail to list the graphics card
-//! ("A return array was too small for the result"). The game then falls back to DirectX 12, which draws the sprites wrongly.
-//! Turning those optional layers off fixes it, but they are only turned off on a PC that needs it: the game looks for
-//! Vulkan adapters first, and only if there are none (with nothing set by the player) does it start itself again with the
-//! layers off. If Vulkan still isn't there, that is remembered so the check isn't repeated on every start.
+//! On some Windows PCs (laptops with two graphics chips above all) an optional driver layer makes Vulkan fail to list the
+//! card, and the game falls back to DirectX 12, which draws the sprites wrongly. Turning the layers off fixes it, so if
+//! there are no Vulkan adapters (and the player set nothing) the game restarts itself with them off. If Vulkan still
+//! isn't there, that is remembered so the check isn't repeated on every start.
 
 #[cfg(windows)]
 pub fn sort_out() {

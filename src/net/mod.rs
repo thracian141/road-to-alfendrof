@@ -1,9 +1,6 @@
-//! Online play: rollback netcode over UDP with `ggrs`.
-//!
-//! Only inputs cross the network. When a remote input differs from the prediction, ggrs rewinds to the
-//! saved state and the simulation is stepped forward again; that works because `GameState` is
-//! `Clone + Hash` and deterministic. Both players need the same build and character files.
-//! Player 0 is the left fighter.
+//! Online play: rollback netcode over UDP with `ggrs`. Only inputs cross the network; when a remote input differs from
+//! the prediction, ggrs rewinds to the saved state and the simulation is stepped forward again (`GameState` is `Clone +
+//! Hash` and deterministic). Both players need the same build and character files. Player 0 is the left fighter.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

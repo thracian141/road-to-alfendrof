@@ -1,6 +1,5 @@
-// Negaprofessor (Evilayz): the Professor in negative colours, move for move and drawing for drawing (white hair,
-// black shirt, blue trousers, a white raven). Only the name, subtitle and colours are his own; keep every number the
-// same as in ayz.ron (the tests check it). See ayz.ron for the moves.
+// Negaprofessor (Evilayz): the Professor in negative colours, move for move. Only the name, subtitle and colours are his
+// own; keep every number the same as in ayz.ron (a test checks it).
 (
     name: "Negaprofessor",
     subtitle: Some("Alfendrof..."),

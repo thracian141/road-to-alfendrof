@@ -528,7 +528,6 @@ fn spawn_fight(
     if *mode != Mode::Online {
         names.0 = [settings.username.clone(), String::new(), String::new(), String::new()];
     }
-    // (the fighters' skills are shown in the character select now, so the match starts with the countdown)
     *sim = fresh_sim(&roster, &selection, *mode, false);
     *pause = if dev.preview.as_deref() == Some("pause") { menus::Pause::Main } else { menus::Pause::Closed };
     surrender.0 = false;
@@ -803,7 +802,6 @@ fn step_sim(
     sim.0.step(inputs, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
 }
 
-/// Pulse between 70% and 100% opacity.
 /// The bar over a fighter charging a move (the Goblin King's pounce), and its fill.
 #[derive(Component)]
 struct ChargeBar(usize, bool);
@@ -862,6 +860,7 @@ fn sync_charge_bars(
     }
 }
 
+/// The portal glows between 85% and 100% opacity.
 fn pulse_glow(time: Res<Time>, mut layers: Query<&mut Sprite, With<Glow>>) {
     let alpha = 0.85 + 0.15 * (time.elapsed_secs() * 2.6).sin();
     for mut sprite in &mut layers {

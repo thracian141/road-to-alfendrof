@@ -1,9 +1,7 @@
-//! What the CPU learns about how a player fights. Every `DECISION_FRAMES` frames a player's play is boiled down to one of a
-//! few kinds of action (stood about, blocked, a light, a heavy, the special, walked in, backed off, jumped), and the CPU
-//! counts what came after what: in this situation (how far apart they are, what the player did last time, what the CPU did
-//! last time) what did the player do next? "Jumps in whenever I attack", "backs off when I come close" and "light, light,
-//! heavy, over and over" all turn up as counts, and the counts become the odds the CPU uses to guess the next action.
-//! Old counts fade, so a player who changes their ways is followed.
+//! What the CPU learns about how a player fights. Every `DECISION_FRAMES` frames their play is boiled down to a kind of
+//! action (stood about, blocked, a light, a heavy, the special, walked in, backed off, jumped), and the CPU counts what
+//! followed what in each situation (the gap, what they did last, what the CPU did last). The counts become the odds it
+//! uses to guess their next action, and old counts fade so a player who changes their ways is followed.
 
 use crate::sim::{Button, CharacterData, Fighter, FighterState};
 

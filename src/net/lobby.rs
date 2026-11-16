@@ -1,12 +1,9 @@
-//! Before a match: finding your public address, inviting a friend (or being invited) and both picking
-//! a fighter, peer to peer over one UDP socket, no host.
+//! Before a match: finding your public address, inviting a friend and both picking a fighter, peer to peer over one UDP
+//! socket. Each message is resent every few hundred milliseconds until the answer shows it arrived.
 //!
-//! Packets can get lost, so each message is repeated every few hundred milliseconds until the answer
-//! shows it arrived.
-//!
-//! Through two routers: if your port is open (UPnP does it on many routers) the invite reaches you. If
-//! not, both of you enter the other's address and invite at the same moment; each side's packets open
-//! the way for the other's. Two invitations that cross count as accepted by both.
+//! Through two routers: if your port is open (UPnP often does it) the invite reaches you; if not, both enter the other's
+//! address and invite at the same moment, and each side's packets open the way for the other's. Invites that cross count
+//! as accepted by both.
 
 use std::net::SocketAddr;
 use std::sync::mpsc::Receiver;

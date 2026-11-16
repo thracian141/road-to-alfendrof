@@ -1,18 +1,11 @@
-// Junkhead: a whip fighter. Looks are the Cowboy From Hell's with a black tank top, red tattoo, plain shoes and his
-// own head; the drawings for his moves are still the cowboy's placeholders.
-//
-// Light: whip from the right, whip from the left (arms alternate while you spam it), and a jump kick as the third hit
-//        of a combo (the finisher). If the finisher lands, his next standing whip has extra reach, once. Crouching
-//        Light is a low whip; in the air Light spins the whip around him from head to legs. Up to three air attacks
-//        per jump: a connected air light can chain into another one or into the air Heavy (the whip pulls him through
-//        the air towards the opponent). The special works in the air too: he hangs there while he spins and the lash
-//        still goes high or low at the floor.
-// Heavy: lash out, grab the opponent and pull himself to them (only half way if they block).
-// Special (tattoo glows when the meter is full): he spins the whip three times (wind-up only), then lashes HIGH
-//        (head and chest: crouch under it) or LOW (the legs: jump over it), at random. If it connects, the opponent
-//        is dragged to him and stunned.
-// See ayz.ron for what each field means; finisher_move / boost_reach / pull_self / pull_foe / pull_gap / low_hitbox /
-// leap / hits are explained in src/sim/data.rs.
+// Junkhead: a whip fighter with the Cowboy's look, a black tank top and a red tattoo.
+// Light: whips (the arms alternate), then a jump kick as the third hit; if it lands his next whip reaches further.
+//        Crouching it is a low whip; in the air it spins the whip round him. Up to three air attacks per jump.
+// Heavy: lashes out and pulls himself to the enemy (half way if blocked). In the air it ends in a floor smash.
+// Special (the tattoo glows when the meter is full): spins the whip three times, then lashes high (crouch under it) or
+//        low (jump over it) at random; a hit drags the enemy in and stuns them. Works in the air too.
+// See ayz.ron for what each field means; finisher_move, boost_reach, pull_self, pull_foe, pull_gap, low_hitbox, leap and
+// hits are in src/sim/data.rs.
 (
     name: "Junkhead",
     subtitle: Some("Producer of his own crack"),
