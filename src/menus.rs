@@ -20,6 +20,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<Picking>()
             .init_resource::<Rebinding>()
             .init_resource::<Pause>()
+            .init_resource::<TitlePage>()
             .init_resource::<Surrendering>()
             .add_systems(OnEnter(AppState::Title), spawn_title)
             .add_systems(OnEnter(AppState::Options), spawn_options)
@@ -52,6 +53,28 @@ impl Plugin for MenuPlugin {
                     fit_menu_art,
                 ),
             );
+    }
+}
+
+/// Which list the title screen shows. Going into a game mode leaves it as it is, so Back from the character select, the
+/// lobbies and so on comes back to the page that was open.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TitlePage {
+    #[default]
+    Main,
+    Singleplayer,
+    Multiplayer,
+    SameDevice,
+}
+
+impl TitlePage {
+    /// The page Back goes to (the main one quits).
+    fn parent(self) -> Option<TitlePage> {
+        match self {
+            TitlePage::Main => None,
+            TitlePage::Singleplayer | TitlePage::Multiplayer => Some(TitlePage::Main),
+            TitlePage::SameDevice => Some(TitlePage::Multiplayer),
+        }
     }
 }
 
@@ -315,7 +338,7 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
 struct TitleLogo;
 
 /// Start screen: the map behind, the logo over it, the menu below.
-fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res<AssetServer>) {
+fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res<AssetServer>, page: Res<TitlePage>) {
     let state = AppState::Title;
     commands.spawn((
         DespawnOnExit(state.clone()),
@@ -349,14 +372,20 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     commands.entity(version).insert((Transform::from_xyz(172.0, 96.0, 5.0), bevy::sprite::Anchor::CENTER_RIGHT));
 
     let white = Color::WHITE;
-    let online = Item::new("Online", white);
+    let soon = Color::srgb(0.5, 0.5, 0.6);
+    let (items, back) = match *page {
+        TitlePage::Main => (vec![Item::new("Singleplayer", white), Item::new("Multiplayer", white), Item::new("Options", white)], "Quit"),
+        TitlePage::Singleplayer => (vec![Item::new("Train", white), Item::new("Campaign (soon)", soon)], "Back"),
+        TitlePage::Multiplayer => (vec![Item::new("Lobbies", white), Item::new("Direct", white), Item::new("Same device", white)], "Back"),
+        TitlePage::SameDevice => (vec![Item::new("2 players", white), Item::new("2v2 - 4 players", white)], "Back"),
+    };
     spawn_menu(
         &mut commands,
         &mut menu,
         state,
         "",
-        "Move: W/S, D-pad or stick\nSelect: Enter / Cross / A   Back: Esc / Circle / B",
-        vec![Item::new("vs CPU", white), Item::new("Local 2 players", white), Item::new("2v2 - 4 players", white), online, Item::new("Options", white)],
+        &format!("Move: W/S, D-pad or stick\nSelect: Enter / Cross / A   {back}: Esc / Circle / B"),
+        items,
         Some(-8.0),
     );
 }
@@ -730,31 +759,60 @@ fn glitch_subtitles(time: Res<Time>, mut lines: Query<(&Glitch, &mut Text2d, &mu
 fn title_confirm(
     keys: Res<crate::MenuInput>,
     menu: Res<Menu>,
+    mut page: ResMut<TitlePage>,
     mut mode: ResMut<Mode>,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if back_pressed(&keys) {
-        exit.write(AppExit::Success);
+        match page.parent() {
+            Some(parent) => {
+                *page = parent;
+                next.set(AppState::Title);
+            }
+            None => {
+                exit.write(AppExit::Success);
+            }
+        }
     } else if confirm_pressed(&keys.0) {
-        match menu.cursor {
-            0 => {
+        // (setting the title again shows the new page)
+        let mut go = |to: AppState| next.set(to);
+        match (*page, menu.cursor) {
+            (TitlePage::Main, 0) => {
+                *page = TitlePage::Singleplayer;
+                go(AppState::Title);
+            }
+            (TitlePage::Main, 1) => {
+                *page = TitlePage::Multiplayer;
+                go(AppState::Title);
+            }
+            (TitlePage::Main, _) => go(AppState::Options),
+            (TitlePage::Singleplayer, 0) => {
                 *mode = Mode::VsCpu;
-                next.set(AppState::CharSelect);
+                go(AppState::CharSelect);
             }
-            1 => {
-                *mode = Mode::LocalVersus;
-                next.set(AppState::CharSelect);
-            }
-            2 => {
-                *mode = Mode::LocalTeams;
-                next.set(AppState::CharSelect);
-            }
-            3 => {
+            // the campaign isn't there yet
+            (TitlePage::Singleplayer, _) => {}
+            (TitlePage::Multiplayer, 0) => {
                 *mode = Mode::Online;
-                next.set(AppState::Social);
+                go(AppState::Social);
             }
-            _ => next.set(AppState::Options),
+            (TitlePage::Multiplayer, 1) => {
+                *mode = Mode::Online;
+                go(AppState::Online);
+            }
+            (TitlePage::Multiplayer, _) => {
+                *page = TitlePage::SameDevice;
+                go(AppState::Title);
+            }
+            (TitlePage::SameDevice, 0) => {
+                *mode = Mode::LocalVersus;
+                go(AppState::CharSelect);
+            }
+            (TitlePage::SameDevice, _) => {
+                *mode = Mode::LocalTeams;
+                go(AppState::CharSelect);
+            }
         }
     }
 }
