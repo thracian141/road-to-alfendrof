@@ -671,63 +671,10 @@ fn spawn_fight(
         // the crescent appears where the summon's projectile starts
         let lob = c.moves.iter().filter_map(|m| m.projectile.as_ref()).find(|p| p.lob);
         let summon = lob.or_else(|| c.moves.iter().find(|m| m.anim == t2f::sim::AnimKind::Summon).and_then(|m| m.projectile.as_ref()));
-        // effect drawings the moves use
-        let mut effects: Vec<String> = Vec::new();
-        for p in c.moves.iter().filter_map(|m| m.projectile.as_ref()) {
-            for name in [p.image_name(), p.summon_name()] {
-                if !effects.iter().any(|e| e == name) {
-                    effects.push(name.to_string());
-                }
-            }
-        }
-        if c.moves.iter().filter_map(|m| m.projectile.as_ref()).any(|p| p.lob && !p.over_target) && !effects.iter().any(|e| e == "moon_star") {
-            effects.push("moon_star".to_string());
-        }
-        if c.moves.iter().any(|m| m.beam.is_some_and(|b| !b.whale)) && !effects.iter().any(|e| e == "jesus") {
-            effects.push("jesus".to_string());
-        }
-        if c.moves.iter().any(|m| m.plot_armour > 0) && !effects.iter().any(|e| e == "shield") {
-            effects.push("shield".to_string());
-        }
-        if c.moves.iter().any(|m| m.beam.is_some_and(|b| b.whale)) && !effects.iter().any(|e| e == "whale") {
-            effects.push("pool".to_string());
-            effects.push("whale".to_string());
-        }
-        if c.moves.iter().any(|m| m.minions.is_some_and(|md| !md.agent)) && !effects.iter().any(|e| e == "goblin") {
-            effects.push("goblin".to_string());
-        }
-        if c.moves.iter().any(|m| m.minions.is_some_and(|md| md.agent)) && !effects.iter().any(|e| e == "agent") {
-            effects.push("agent".to_string());
-        }
-        for zone in c.moves.iter().filter_map(|m| m.zone) {
-            let name = match zone.kind {
-                t2f::sim::ZoneKind::Glitch => "glitch",
-                t2f::sim::ZoneKind::Spill => "spill",
-                t2f::sim::ZoneKind::Coin => "coin",
-            };
-            if !effects.iter().any(|e| e == name) {
-                effects.push(name.to_string());
-            }
-        }
-        // and how many drawings each has, when a shot says (0 for the usual)
-        let shots: Vec<_> = c.moves.iter().filter_map(|m| m.projectile.as_ref()).collect();
-        // (a move's spells have pictures of their own)
-        let mut effects = effects;
-        for spell in c.moves.iter().flat_map(|m| m.spells.iter()) {
-            if !effects.iter().any(|e| *e == spell.image) {
-                effects.push(spell.image.clone());
-            }
-        }
-        let effects: Vec<(String, usize)> = effects
-            .into_iter()
-            .map(|e| {
-                let n = shots.iter().find(|p| p.image_name() == e && p.drawings > 0).map_or(0, |p| p.drawings);
-                let n = if n > 0 { n } else { c.moves.iter().flat_map(|m| m.spells.iter()).find(|s| s.image == e).map_or(0, |s| s.drawings) };
-                (e, n)
-            })
-            .collect();
+        let effects = t2f::anim::effect_drawings(c);
         let frames = t2f::anim::frames_for(c);
-        render::spawn_fighter(&mut commands, &asset_server, &assets_dir(), &mut handles, i, c.sprites.as_deref().unwrap_or(&c.name), rgb(c.color), summon, &effects, &frames, c.special_mark.is_some(), c.whip || c.moves.iter().any(|m| m.rope), c.raven.is_some());
+        let (mark, whip, raven) = t2f::anim::sprite_flags(c);
+        render::spawn_fighter(&mut commands, &asset_server, &assets_dir(), &mut handles, i, c.sprites.as_deref().unwrap_or(&c.name), rgb(c.color), summon, &effects, &frames, mark, whip, raven);
     }
     for i in 0..sim.0.fighters.len() {
         let c = &roster.0[selection.chars[i]];

@@ -108,26 +108,6 @@ pub struct CurseOf(pub usize);
 /// What the lecturing fighter says.
 pub const LECTURE_LINE: &str = "here's the thing...";
 
-/// Every drawing's file name for a character.
-fn all_stems(frames: &[Frame], effects: &[(String, usize)], mark: bool, whip: bool, raven: bool) -> Vec<String> {
-    let mut stems: Vec<String> = frames.iter().map(|f| f.file_stem()).collect();
-    if raven {
-        stems.extend(frames.iter().map(|f| format!("{}_nr", f.file_stem())));
-        stems.extend(t2f::anim::raven_stems());
-    }
-    if whip {
-        stems.extend(t2f::anim::whip_stems());
-    }
-    if mark {
-        stems.extend(frames.iter().map(|f| format!("{}_mark", f.file_stem())));
-    }
-    for (base, drawings) in effects {
-        let count = if *drawings > 0 { *drawings } else if base == "goblin" { 8 } else if base == "agent" { 9 } else if base == "glitch" { 4 } else if base == "whale" { 6 } else { CRESCENT_FRAMES.max(STAR_FRAMES) };
-        stems.extend((0..count).map(|i| format!("{base}_{i}")));
-    }
-    stems
-}
-
 /// Spawn one fighter and its effects from `assets/sprites/<name>/`; without drawings it falls back to a flat colour box.
 pub fn spawn_fighter(
     commands: &mut Commands,
@@ -148,7 +128,7 @@ pub fn spawn_fighter(
     let has_art = assets_dir.join(format!("sprites/{folder}/idle_0.png")).exists();
     let mut map = HashMap::new();
     if has_art {
-        for stem in all_stems(frames, effects, mark, whip, raven) {
+        for stem in t2f::anim::stems(frames, effects, mark, whip, raven) {
             map.insert(stem.clone(), asset_server.load(format!("sprites/{folder}/{stem}.png")));
         }
     }

@@ -261,6 +261,96 @@ pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     v
 }
 
+/// The effect drawings a character's moves use (shots, summons, shields, zones, spells...) with how many drawings each has
+/// (0 for the usual two). Each is `<name>_0.png`, `<name>_1.png`... in its sprite folder.
+pub fn effect_drawings(c: &CharacterData) -> Vec<(String, usize)> {
+    use crate::sim::ZoneKind;
+    let mut effects: Vec<String> = Vec::new();
+    let mut add = |name: &str| {
+        if !effects.iter().any(|e| e == name) {
+            effects.push(name.to_string());
+        }
+    };
+    for m in &c.moves {
+        let Some(p) = m.projectile.as_ref() else { continue };
+        // a shot only has a summoning drawing when it says so, or when it is a summon's own
+        let summon = (p.summon_image.is_some() || m.anim == AnimKind::Summon).then(|| p.summon_name());
+        for name in [Some(p.image_name()), summon].into_iter().flatten().filter(|n| *n != "none") {
+            add(name);
+        }
+    }
+    if c.moves.iter().filter_map(|m| m.projectile.as_ref()).any(|p| p.lob && !p.over_target) {
+        add("moon_star");
+    }
+    if c.moves.iter().any(|m| m.beam.is_some_and(|b| !b.whale)) {
+        add("jesus");
+    }
+    if c.moves.iter().any(|m| m.plot_armour > 0) {
+        add("shield");
+    }
+    if c.moves.iter().any(|m| m.beam.is_some_and(|b| b.whale)) {
+        add("pool");
+        add("whale");
+    }
+    if c.moves.iter().any(|m| m.minions.is_some_and(|md| !md.agent)) {
+        add("goblin");
+    }
+    if c.moves.iter().any(|m| m.minions.is_some_and(|md| md.agent)) {
+        add("agent");
+    }
+    for zone in c.moves.iter().filter_map(|m| m.zone) {
+        add(match zone.kind {
+            ZoneKind::Glitch => "glitch",
+            ZoneKind::Spill => "spill",
+            ZoneKind::Coin => "coin",
+        });
+    }
+    for spell in c.moves.iter().flat_map(|m| m.spells.iter()) {
+        add(&spell.image);
+    }
+    let shots: Vec<_> = c.moves.iter().filter_map(|m| m.projectile.as_ref()).collect();
+    effects
+        .into_iter()
+        .map(|e| {
+            let n = shots.iter().find(|p| p.image_name() == e && p.drawings > 0).map_or(0, |p| p.drawings);
+            let n = if n > 0 { n } else { c.moves.iter().flat_map(|m| m.spells.iter()).find(|s| s.image == e).map_or(0, |s| s.drawings) };
+            (e, n)
+        })
+        .collect()
+}
+
+/// Whether a character has a special-ready overlay (`_mark`), a whip layer, and a raven (`_nr` drawings).
+pub fn sprite_flags(c: &CharacterData) -> (bool, bool, bool) {
+    (c.special_mark.is_some(), c.whip || c.moves.iter().any(|m| m.rope), c.raven.is_some())
+}
+
+/// File names (without `.png`) of every drawing a character needs in its sprite folder.
+pub fn stems(frames: &[Frame], effects: &[(String, usize)], mark: bool, whip: bool, raven: bool) -> Vec<String> {
+    let mut stems: Vec<String> = frames.iter().map(|f| f.file_stem()).collect();
+    if raven {
+        stems.extend(frames.iter().map(|f| format!("{}_nr", f.file_stem())));
+        stems.extend(raven_stems());
+    }
+    if whip {
+        stems.extend(whip_stems());
+    }
+    if mark {
+        stems.extend(frames.iter().map(|f| format!("{}_mark", f.file_stem())));
+    }
+    for (base, drawings) in effects {
+        let count = match base.as_str() {
+            _ if *drawings > 0 => *drawings,
+            "goblin" => 8,
+            "agent" => 9,
+            "glitch" => 4,
+            "whale" => 6,
+            _ => CRESCENT_FRAMES.max(STAR_FRAMES),
+        };
+        stems.extend((0..count).map(|i| format!("{base}_{i}")));
+    }
+    stems
+}
+
 /// Effect drawing counts (crescent, star).
 pub const CRESCENT_FRAMES: usize = 2;
 pub const STAR_FRAMES: usize = 2;
@@ -705,6 +795,27 @@ mod tests {
         assert_eq!(frame_for(&f, &d, false, 0), Frame::Punch(3), "left arm striking");
         let (c, d3) = attacking("Low Jab", 2);
         assert_eq!(frame_for(&c, &d3, false, 0), Frame::CrouchSoft(0));
+    }
+
+    /// Every drawing the game loads for a character is a real file (a missing one is a failed load and a line in the log).
+    #[test]
+    fn every_drawing_a_character_asks_for_exists_on_disk() {
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir("assets/characters").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "ron") {
+                continue;
+            }
+            let c = CharacterData::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
+            let (mark, whip, raven) = sprite_flags(&c);
+            for stem in stems(&frames_for(&c), &effect_drawings(&c), mark, whip, raven) {
+                if !std::path::Path::new(&format!("assets/sprites/{folder}/{stem}.png")).exists() {
+                    missing.push(format!("{folder}/{stem}"));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "missing drawings: {missing:?}");
     }
 
     fn junkhead() -> CharacterData {

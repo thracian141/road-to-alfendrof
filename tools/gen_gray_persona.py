@@ -703,31 +703,8 @@ def bat_form(k):
 
 
 def effects():
-    """Her bats (the heavy's wave, two drawings), the portal (two drawings) and the hand that grabs."""
+    """The portal (two drawings) and the hand that grabs."""
     out = {}
-    # (x, y, wingspan, phase): the small ones at the back, the big ones leading
-    # (x, y, wingspan, phase), drawn back to front: far ones first
-    swarm = [(10, 12, 9, 0.0), (14, 34, 9, 2.1), (20, 22, 10, 4.0), (24, 6, 10, 1.2), (28, 40, 11, 3.3),
-             (31, 15, 12, 5.1), (35, 29, 12, 2.6), (41, 8, 13, 0.7), (44, 38, 14, 4.4), (47, 20, 15, 1.9),
-             (53, 30, 16, 3.8), (55, 10, 16, 5.6), (61, 22, 18, 0.4), (64, 36, 15, 2.9)]
-    for k in range(6):
-        img = blank(74, 48)
-        # a dark crimson cloud the swarm flies in, thinning out behind
-        for n, (x, y, rx, ry) in enumerate(((10, 24, 10, 14), (22, 12, 9, 8), (22, 36, 9, 8), (36, 24, 12, 14), (4, 18, 5, 6))):
-            mist(img, x - k % 2, y + (1 if (n + k) % 3 == 0 else 0), rx, ry, (60, 8, 30), 110, k + n)
-        t = 2 * math.pi * k / 6
-        for x, y, span, ph in swarm:
-            bob = round(2.5 * math.sin(t + ph))
-            flap = math.sin(2 * t + ph * 1.7)
-            far = span < 12
-            # speed streaks behind the near ones
-            if not far:
-                for dy in (-1, 1):
-                    for dx in range(3, 3 + span // 2):
-                        if (dx + k + int(ph * 3)) % 3:
-                            put(img, x - span // 2 - dx, y + bob + dy, (90, 30, 70) if dx < 3 + span // 4 else (60, 16, 46))
-            flying_bat(img, x, y + bob, span, flap, far=far)
-        out[f"bats_{k}"] = img
     for k in range(2):
         img = blank(24, 44)
         cx, cy = 11.5, 21.5

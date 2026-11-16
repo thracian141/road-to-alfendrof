@@ -468,9 +468,6 @@ def build():
     p = pose("air_soft_0", up=(-1, 0)); arms(p, back=(2, 24), front=(31, -3), upper=10, fore=11)
     p = pose("air_soft_1", up=(1, 0)); arms(p, back=(2, 20), front=(42, 31), upper=10, fore=11)
     swoosh(p.canvas, at(p, 30, 22), 13, -85, 25)
-    for k, (back, front) in enumerate([("rest", (30, 32)), ("rest", (41, 25)), ((22, 23), (30, 33)), ("rest", (44, 28))]):
-        p = pose(f"punch_{k}"); arms(p, back=back, front=front, upper=10, fore=11)
-
     # speaking
     p = pose("speak_0"); arms(p, back="rest", front=(30, 24)); p.face("open")
     p = pose("speak_1"); arms(p, back="rest", front=(34, 16)); p.face("open")
