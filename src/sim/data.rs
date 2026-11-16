@@ -136,10 +136,6 @@ pub enum AnimKind {
     Punch,
     /// Hard attack as a leap with a series of kicks.
     Kicks,
-    /// Hard attack as a lecture: speech bubble, raised finger, blast of words.
-    Lecture,
-    /// Hard attack as a volley of shots from alternating hands.
-    Volley,
     /// Speaking at the opponent: 2 drawings, breath then the word.
     Speak,
     /// Commanding the raven: raised finger, then the arm out (3 drawings).
@@ -303,9 +299,6 @@ pub struct ProjectileData {
     /// Never turned to face where it flies (words stay readable).
     #[serde(default)]
     pub upright: bool,
-    /// A short-range shot that is really a melee attack: moves that clear projectiles leave it alone.
-    #[serde(default)]
-    pub melee: bool,
     /// A heat-seeking missile: it steers towards the opponent (each frame its velocity moves
     /// `homing_turn` percent of the way to pointing at them, at its fixed speed) and detonates, hitting
     /// them, once it is within `detonate` pixels. It starts by flying up and forward.
@@ -536,12 +529,9 @@ pub struct MoveData {
     /// Used in the air (once per jump). Ground and air moves are separate.
     #[serde(default)]
     pub air: bool,
-    /// Chargeable move: frames the button can be held at the end of the startup, and the extra
-    /// damage (percent) of a full charge.
+    /// Chargeable move: frames the button can be held at the end of the startup.
     #[serde(default)]
     pub charge_frames: u32,
-    #[serde(default)]
-    pub charge_bonus_pct: i32,
     pub startup: u32,
     pub active: u32,
     pub recovery: u32,
@@ -731,13 +721,9 @@ pub struct MoveData {
     #[serde(default)]
     pub shared_cooldown: bool,
     /// While the hitbox is active, every enemy projectile within the hitbox's horizontal range (at any
-    /// height up to a little above the head) is destroyed, except `melee` ones (the staff's shockwave).
+    /// height up to a little above the head) is destroyed (the staff's shockwave).
     #[serde(default)]
     pub clears_projectiles: bool,
-    /// Whoever this move hits can't help hurting themselves: for this many frames each attack they
-    /// start costs them a little health.
-    #[serde(default)]
-    pub futility: u32,
     /// What the character writes while this move winds up, in a speech bubble (`{enemy}` is the
     /// opponent's name).
     #[serde(default)]

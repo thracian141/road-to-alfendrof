@@ -1271,10 +1271,7 @@ impl GameState {
             if p.homing {
                 (vx, vy) = Self::missile_launch_velocity(p, f.facing);
             }
-            let mut power = if mv.charge_frames > 0 { 100 + f.charge as i32 * mv.charge_bonus_pct / mv.charge_frames as i32 } else { 100 };
-            if f.finisher {
-                power = power * 150 / 100;
-            }
+            let power = if f.finisher { 150 } else { 100 };
             let spell = if mv.spells.is_empty() { 0 } else { f.spell };
             self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x, power, spell });
             let f = &mut self.fighters[owner];
@@ -1287,8 +1284,7 @@ impl GameState {
     }
 
     /// A move that clears projectiles (the staff's shockwave) destroys every enemy projectile in its
-    /// horizontal reach while it is active, whatever the height up to a little above the head, but
-    /// not `melee` ones.
+    /// horizontal reach while it is active, whatever the height up to a little above the head.
     fn clear_projectiles(&mut self, chars: &[&CharacterData]) {
         for owner in 0..self.fighters.len() {
             let f = &self.fighters[owner];
@@ -1310,12 +1306,11 @@ impl GameState {
                 if teams[p.owner] == teams[owner] {
                     return true;
                 }
-                let melee = chars[p.owner].moves[p.move_index].projectile.as_ref().is_some_and(|d| d.melee);
                 let inside = p.x >= x0 && p.x <= x1 && p.y >= bottom && p.y <= top;
-                if inside && !melee {
+                if inside {
                     gone.push((p.x, p.y, frame));
                 }
-                melee || !inside
+                !inside
             });
             self.cleared.extend(gone);
         }
@@ -1761,9 +1756,6 @@ impl GameState {
                         // she can turn into a bat until the heavy's cooldown runs out
                         let f = &mut self.fighters[owner];
                         f.bat_ready = f.cooldown_left(p.move_index).max(1);
-                    }
-                    if !blocked && mv.futility > 0 {
-                        self.fighters[defender].futile = mv.futility;
                     }
                     if !blocked && mv.plot_armour > 0 {
                         self.fighters[owner].plot_armour = mv.plot_armour;
@@ -3052,31 +3044,6 @@ mod tests {
     }
 
     #[test]
-    fn a_chargeable_move_hits_harder_the_longer_the_button_is_held() {
-        let mut data = ayz();
-        let special = data.moves.iter().position(|m| m.button == Button::Special).unwrap();
-        data.moves[special].charge_frames = 45;
-        data.moves[special].charge_bonus_pct = 80;
-        let damage = |hold: u32| {
-            let mut s = GameState::new();
-            s.fighters[0].meter = Fighter::METER_MAX;
-            s.fighters[1].x = 60 * PX;
-            let enemy = evilayz();
-            s.step([Input(Input::SPECIAL), Input(0)], [&data, &enemy]);
-            for _ in 0..hold {
-                s.step([Input(Input::SPECIAL), Input(0)], [&data, &enemy]);
-            }
-            for _ in 0..120 {
-                s.step([Input(0), Input(0)], [&data, &enemy]);
-            }
-            Fighter::MAX_HEALTH - s.fighters[1].health
-        };
-        let (quick, charged) = (damage(0), damage(60));
-        assert!(quick > 0);
-        assert!(charged > quick, "charged {charged} vs quick {quick}");
-    }
-
-    #[test]
     fn the_special_needs_a_full_meter_which_hits_fill_and_the_special_spends() {
         let mut s = GameState::new();
         step(&mut s, Input::SPECIAL, 0);
@@ -4191,12 +4158,9 @@ mod tests {
     }
 
     #[test]
-    fn the_staff_slam_destroys_enemy_projectiles_in_its_reach_but_not_melee_ones_or_far_ones() {
-        let run = |slam: bool, melee: bool, gap: i32| {
-            let mut prof = professor();
-            if melee {
-                prof.moves[0].projectile.as_mut().unwrap().melee = true;
-            }
+    fn the_staff_slam_destroys_enemy_projectiles_in_its_reach_but_not_far_ones() {
+        let run = |slam: bool, gap: i32| {
+            let prof = professor();
             let a = anaran();
             let mut s = GameState::new();
             s.fighters[0].x = 0;
@@ -4208,11 +4172,10 @@ mod tests {
             }
             Fighter::MAX_HEALTH - s.fighters[0].health
         };
-        assert_eq!(run(false, false, 120), 20, "without the slam the word hits him");
-        assert_eq!(run(true, false, 120), 0, "the slam destroys it");
-        assert_eq!(run(true, true, 120), 20, "but not a melee projectile");
+        assert_eq!(run(false, 120), 20, "without the slam the word hits him");
+        assert_eq!(run(true, 120), 0, "the slam destroys it");
         // from the far side of the stage the word is still well outside the shockwave while it is active, and arrives
-        assert_eq!(run(true, false, 200), 20, "out of reach: not cleared");
+        assert_eq!(run(true, 200), 20, "out of reach: not cleared");
     }
 
     #[test]

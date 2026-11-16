@@ -74,9 +74,6 @@ pub struct BubbleOf(pub usize);
 /// The two layers of a speech bubble's tail (black border, white fill), which sits on its bottom edge.
 #[derive(Component)]
 pub struct BubbleTail(pub usize, pub bool);
-/// One of the three red worry lines round the head of a futile fighter.
-#[derive(Component)]
-pub struct WorryLine(pub usize, pub usize);
 /// Jesus in the sky, and the two layers (glow, core) of his beam.
 #[derive(Component)]
 pub struct JesusOf(pub usize);
@@ -244,7 +241,7 @@ pub fn spawn_fighter(
                 ));
             }
         }
-        if frames.iter().any(|f| matches!(f, Frame::Lecture(_) | Frame::Grab(_) | Frame::Write(_))) {
+        if frames.iter().any(|f| matches!(f, Frame::Grab(_) | Frame::Write(_))) {
             let width = LECTURE_LINE.len() as f32 * 5.0 + 10.0;
             commands
                 .spawn((BubbleOf(fighter), DespawnOnExit(AppState::Fight), Transform::from_xyz(0.0, 0.0, 7.0), Visibility::Hidden))
@@ -263,13 +260,6 @@ pub fn spawn_fighter(
                         Transform::from_xyz(0.0, 0.0, 0.3),
                     ));
                 });
-        }
-        // red worry lines round the head, shown while futile
-        for index in 0..3 {
-            let line = commands
-                .spawn((WorryLine(fighter, index), Sprite::from_color(Color::srgb(0.92, 0.1, 0.14), Vec2::new(1.0, 5.0)), Transform::from_xyz(0.0, 0.0, 0.4), Visibility::Hidden))
-                .id();
-            commands.entity(root).add_child(line);
         }
         // the bubble of plot armour, and the words on its top left
         if effects.iter().any(|e| e.0 == "shield") {
@@ -382,12 +372,6 @@ fn tint(state: FighterState) -> Color {
     }
 }
 
-/// A futile fighter is drawn washed over with blue.
-fn futile_tint(c: Color) -> Color {
-    let s = c.to_srgba();
-    Color::srgba(s.red * 0.6, s.green * 0.74, s.blue, s.alpha)
-}
-
 /// Place each fighter, face the opponent, and knock them over when KO'd.
 pub fn pose_bodies(sim: Res<Sim>, mut bodies: Query<(&Body, &mut Transform)>) {
     for (Body(i), mut tf) in &mut bodies {
@@ -425,9 +409,6 @@ pub fn animate_body(
         // a fighter who can't attack (the staff's shockwave) is tinted violet
         if f.silenced > 0 && f.state != FighterState::Hitstun {
             set_ne!(sprite.color, Color::srgb(0.78, 0.68, 1.0));
-        }
-        if f.futile > 0 {
-            set_ne!(sprite.color, futile_tint(sprite.color));
         }
         // bleeding: washed over with red
         if f.bleed_ticks > 0 {
@@ -842,7 +823,7 @@ pub fn animate_bubbles(
         let grabbing = mv.hits > 1;
         let lecturing = lingering.is_some()
             || (attacking
-                && (line.is_some() || matches!(mv.anim, t2f::sim::AnimKind::Lecture | t2f::sim::AnimKind::Grab))
+                && (line.is_some() || mv.anim == t2f::sim::AnimKind::Grab)
                 && (line.is_some() || f.state_frame + 3 < mv.total_frames())
                 && (!grabbing || f.state_frame > mv.startup));
         set_ne!(*visibility, if lecturing { Visibility::Inherited } else { Visibility::Hidden });
@@ -1411,31 +1392,16 @@ fn wrap_words(text: &str, width: usize) -> String {
     out
 }
 
-/// The red worry lines round the head of a futile fighter (they tremble), and Jesus with his beam.
+/// Jesus in the sky with his beam.
 pub fn animate_scribe_effects(
     sim: Res<Sim>,
     roster: Res<Roster>,
     sel: Res<Selection>,
     handles: Res<FrameHandles>,
     time: Res<Time>,
-    mut worry: Query<(&WorryLine, &mut Transform, &mut Visibility), (Without<JesusOf>, Without<BeamPart>)>,
-    mut jesus: Query<(&JesusOf, &mut Sprite, &mut Transform, &mut Visibility), (Without<WorryLine>, Without<BeamPart>)>,
-    mut beams: Query<(&BeamPart, &mut Sprite, &mut Transform, &mut Visibility), (Without<WorryLine>, Without<JesusOf>)>,
+    mut jesus: Query<(&JesusOf, &mut Sprite, &mut Transform, &mut Visibility), Without<BeamPart>>,
+    mut beams: Query<(&BeamPart, &mut Sprite, &mut Transform, &mut Visibility), Without<JesusOf>>,
 ) {
-    for (WorryLine(i, index), mut tf, mut visibility) in &mut worry {
-        let Some(f) = sim.0.fighters.get(*i) else { continue };
-        set_ne!(*visibility, if f.futile > 0 { Visibility::Inherited } else { Visibility::Hidden });
-        // three short strokes fanning out above the head, trembling
-        let shake = if (sim.0.frame / 4 + *index as u32) % 2 == 0 { 0.0 } else { 1.0 };
-        let (x, y, angle) = match index {
-            0 => (-10.0, 60.0 + shake, 0.55),
-            1 => (0.0, 64.0 - shake, 0.0),
-            _ => (10.0, 60.0 + shake, -0.55),
-        };
-        // the head is a little right of the body centre in the drawings
-        tf.translation = Vec3::new(x + 2.0, y, 0.4);
-        tf.rotation = Quat::from_rotation_z(angle);
-    }
     for (JesusOf(i), mut sprite, mut tf, mut visibility) in &mut jesus {
         let Some(f) = sim.0.fighters.get(*i) else { continue };
         let data = &roster.0[sel.chars[*i]];

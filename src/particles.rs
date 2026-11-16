@@ -3,7 +3,6 @@
 //! and fades them every frame.
 
 use bevy::prelude::*;
-use t2f::anim::{frame_for, Frame, CENTRE_X, FULL_H};
 use t2f::sim::{AnimKind, Fighter, FighterState, SpellData, SpellMotion, PX};
 
 use crate::{AppState, Roster, Selection, Sim, GROUND_Y};
@@ -29,7 +28,6 @@ struct Snap {
     health: i32,
     y: i32,
     slamming: bool,
-    futile: bool,
     bat: bool,
 }
 
@@ -216,13 +214,6 @@ pub fn emit(
         let feet = Vec2::new((f.x / PX) as f32, GROUND_Y + (f.y / PX) as f32);
         let towards = if s.fighters[s.target(i)].x >= f.x { 1.0 } else { -1.0 };
         if let Some(prev) = seen.fighters[i] {
-            // futility lands: a blue burst round the head
-            if f.futile > 0 && !prev.futile {
-                let head = feet + Vec2::new(2.0, 50.0);
-                let blue = [Color::srgb(0.45, 0.7, 1.0), Color::srgb(0.7, 0.88, 1.0), Color::WHITE];
-                burst(&mut commands, &mut seen, head, 24, 40.0, 130.0, &blue, 3.0, 0.5, 0.0);
-                spawn(&mut commands, head, Vec2::ZERO, Color::srgb(0.7, 0.85, 1.0), 16.0, 0.12, 0.0, true);
-            }
             // hits and blocks: health dropped this tick
             if f.health < prev.health {
                 let lost = prev.health - f.health;
@@ -409,17 +400,6 @@ pub fn emit(
             }
         }
 
-        // smoke curls up from the fingertip after the finger-gun volley
-        if f.state == FighterState::Attack && data.moves[f.attack].anim == AnimKind::Volley && frame_for(f, data, false, s.frame) == Frame::Gun(4) && s.frame % 3 == 0 {
-            // tip of the finger that fired last (column 63, row 22 of the drawing), in the world
-            let tip = Vec2::new((f.x / PX) as f32 + f.facing as f32 * (63 - CENTRE_X) as f32, GROUND_Y + (f.y / PX) as f32 + (FULL_H - 22) as f32);
-            let grey = [Color::srgb(0.88, 0.88, 0.9), Color::srgb(0.7, 0.7, 0.75)];
-            let off = Vec2::new(seen.range(-1.5, 1.5), 0.0);
-            let drift = Vec2::new(seen.range(-4.0, 8.0) * f.facing as f32, seen.range(14.0, 24.0));
-            let size = if seen.rand() > 0.5 { 4.0 } else { 5.0 };
-            puff(&mut commands, &smoke, tip + off, drift, grey[(s.frame as usize / 3) % 2], size, 1.1);
-        }
-
         // the curse: sparkles round the ring, shards when a half is hit, a collapse at the end
         let centre = feet + Vec2::new(0.0, 38.0);
         let blue = [Color::srgb(0.45, 0.72, 1.0), Color::WHITE, Color::srgb(0.2, 0.45, 0.95)];
@@ -469,14 +449,12 @@ pub fn emit(
             }
         }
 
-        // the lecture: words and symbols pour out of his mouth, a blast of them when it lands, chalk dust off the raised finger (the collar grab only talks while he holds the enemy)
+        // the collar grab: words and symbols pour out of his mouth while he holds the enemy
         let talking = |mv: &t2f::sim::MoveData| match mv.anim {
-            AnimKind::Lecture => true,
             AnimKind::Grab => f.state_frame > mv.startup && f.state_frame <= mv.startup + mv.hit_gap,
             _ => false,
         };
         if f.state == FighterState::Attack && talking(&data.moves[f.attack]) {
-            let mv = &data.moves[f.attack];
             let dir = f.facing as f32;
             let mouth = feet + Vec2::new(2.0 * dir, 41.0);
             if s.frame % 4 == 0 {
@@ -485,18 +463,6 @@ pub fn emit(
                 let rgb = if seen.rand() > 0.5 { [1.0, 1.0, 1.0] } else { [1.0, 0.92, 0.5] };
                 let vel = Vec2::new(dir * seen.range(16.0, 34.0), seen.range(8.0, 22.0));
                 pop(&mut commands, g, mouth + Vec2::new(dir * 4.0, seen.range(-3.0, 6.0)), vel, rgb, 9.0);
-            }
-            if s.frame % 3 == 0 && mv.anim == AnimKind::Lecture {
-                let tip = feet + Vec2::new(dir * 20.0, 57.0);
-                let v = Vec2::new(seen.range(-12.0, 12.0), seen.range(-6.0, 10.0));
-                spawn(&mut commands, tip, v, Color::srgb(0.96, 0.96, 0.98), 2.0, 0.5, -30.0, true);
-            }
-            if mv.is_active(f.state_frame) && mv.anim == AnimKind::Lecture {
-                // the words land: a fan of white flecks in front of him
-                for _ in 0..5 {
-                    let v = Vec2::new(dir * seen.range(70.0, 130.0), seen.range(-22.0, 22.0));
-                    spawn(&mut commands, mouth + Vec2::new(dir * 6.0, seen.range(-3.0, 3.0)), v, Color::WHITE, 2.0, 0.28, 0.0, true);
-                }
             }
         }
 
@@ -793,19 +759,6 @@ pub fn emit(
             let gold = if mv.projectile.as_ref().is_some_and(|d| d.image_name() == "orb") { &blue_orb } else { &gold };
             if p.age == 1 {
                 burst(&mut commands, &mut seen, at, 14, 50.0, 150.0, gold, 3.0, 0.4, 0.0);
-                if mv.anim == AnimKind::Volley {
-                    spawn(&mut commands, at, Vec2::ZERO, Color::WHITE, 12.0, 0.1, 0.0, true);
-                    shake.0 = shake.0.max(2.0);
-                    let jitter = seen.range(-6.0, 6.0);
-                    commands.spawn((
-                        Pop { life: 0.45, max: 0.45, vel: Vec2::new(0.0, 28.0), rgb: [1.0, 0.9, 0.2] },
-                        DespawnOnExit(AppState::Fight),
-                        Text2d::new("BAM!"),
-                        crate::pixel_font(14.0),
-                        TextColor(Color::srgb(1.0, 0.9, 0.2)),
-                        Transform::from_xyz(at.x + towards * 14.0, at.y + 12.0 + jitter, 6.0),
-                    ));
-                }
             }
             let size = 2.0 + (p.power - 100) as f32 / 40.0;
             for _ in 0..2 {
@@ -826,7 +779,7 @@ pub fn emit(
             spawn(&mut commands, head + off, Vec2::new(0.0, 18.0), gold[(s.frame as usize / 6) % 3], 2.0, 0.5, 0.0, true);
         }
         seen.ready[i] = ready;
-        seen.fighters[i] = Some(Snap { state: f.state, health: f.health, y: f.y, slamming: f.slamming, futile: f.futile > 0, bat: f.bat_form > 0 });
+        seen.fighters[i] = Some(Snap { state: f.state, health: f.health, y: f.y, slamming: f.slamming, bat: f.bat_form > 0 });
     }
 }
 

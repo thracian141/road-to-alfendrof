@@ -184,8 +184,6 @@ pub struct Fighter {
     /// side, in pixels (a launch blast sets its own).
     pub slam_damage: i32,
     pub slam_radius: i32,
-    /// Futility: frames left in which every attack this fighter starts costs them `FUTILITY_DAMAGE`.
-    pub futile: u32,
     /// Throws in the current burst (`burst_shots`), and the frames since the last one.
     pub burst_count: u32,
     pub burst_idle: u32,
@@ -246,8 +244,6 @@ impl Fighter {
     pub const SLAM_SPEED: i32 = 1500;
     pub const SLAM_MIN_HEIGHT: i32 = 14 * PX;
     pub const SLAM_DAMAGE: i32 = 28;
-    /// What starting an attack costs while futile (it can't kill).
-    pub const FUTILITY_DAMAGE: i32 = 12;
     pub const SLAM_RADIUS: i32 = 44;
     /// The second jump is this percent of the first jump's speed.
     pub const DOUBLE_JUMP_PCT: i32 = 90;
@@ -322,7 +318,6 @@ impl Fighter {
             slam_landed: false,
             slam_damage: Self::SLAM_DAMAGE,
             slam_radius: Self::SLAM_RADIUS,
-            futile: 0,
             plot_armour: 0,
             covered: false,
             burst_count: 0,
@@ -511,9 +506,6 @@ impl Fighter {
         if mv.cig_cost > 0 {
             self.cig_timer = 0;
         }
-        if self.futile > 0 {
-            self.health = (self.health - Self::FUTILITY_DAMAGE).max(1);
-        }
         if mv.cooldown > 0 {
             if let Some(left) = self.cooldowns.get_mut(index) {
                 *left = mv.cooldown;
@@ -643,7 +635,6 @@ impl Fighter {
             self.bat_form -= 1;
             self.poof = self.bat_form == 0;
         }
-        self.futile = self.futile.saturating_sub(1);
         self.plot_armour = self.plot_armour.saturating_sub(1);
         // a burst that is left alone starts over
         if self.burst_count > 0 {

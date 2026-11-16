@@ -782,10 +782,6 @@ fn spec(frame: Frame) -> Spec {
         Frame::Speak(0) => s((Keep, pose((42.0, 25.0), (45.0, 17.0))), 0.0, 0, stand(), 1),
         Frame::Speak(_) => s((Keep, pose((41.0, 27.0), (44.0, 22.0))), 0.0, 0, stand(), 2),
         // The lecture: a breath, then the finger goes up while he talks, wags, and comes down.
-        Frame::Lecture(0) => s((Keep, Keep), -2.0, 0, stand(), 1),
-        Frame::Lecture(1) => Spec { arms: (Keep, pose((43.0, 15.0), (41.0, 9.0))), lean: 0.0, dy: 0, legs: stand(), mouth: 2, finger: Some((41.0, 9.0)) },
-        Frame::Lecture(2) => Spec { arms: (Keep, pose((46.0, 12.0), (46.0, 5.0))), lean: 3.0, dy: 0, legs: stand(), mouth: 1, finger: Some((46.0, 5.0)) },
-        Frame::Lecture(_) => Spec { arms: (Keep, pose((42.0, 20.0), (41.0, 13.0))), lean: 1.0, dy: 0, legs: stand(), mouth: 1, finger: Some((41.0, 13.0)) },
         // Alternating punches: the right fist cocks and strikes, then the left. (The Cowboy and the
         // Gunslinger have their own, see cb_spec and gs_spec.)
         Frame::Punch(0) => s((Keep, pose((40.0, 25.0), (34.0, 21.0))), 1.0, 0, stand(), 0),
@@ -821,8 +817,6 @@ fn spec(frame: Frame) -> Spec {
         Frame::Grab(3) => s((pose((9.0, 26.0), (15.0, 22.0)), pose((39.0, 22.0), (46.0, 19.0))), 4.0, 0, legs((8.0, 45.0), (5.0, 48.0), (33.0, 45.0), (36.0, 48.0)), 1),
         Frame::Grab(4) => s((pose((22.0, 25.0), (50.0, 22.0)), pose((43.0, 21.0), (58.0, 20.0))), 7.0, 1, legs((6.0, 46.0), (0.0, 48.0), (36.0, 45.0), (42.0, 48.0)), 2),
         Frame::Grab(_) => s((Keep, pose((38.0, 27.0), (41.0, 29.0))), 1.0, 0, stand(), 1),
-        // Only the Gunslinger has the volley; the others never draw these.
-        Frame::Gun(_) => s((Keep, Keep), 0.0, 0, stand(), 0),
         // Anaran's reading and staff slam are his own (see an_spec).
         Frame::Read(_) | Frame::Staff(_) => s((Keep, Keep), 0.0, 0, stand(), 0),
         // The roll is made from the finished crouch drawing (`--roll-frames`), not drawn here.
@@ -1210,7 +1204,6 @@ fn all_frames(default: &Grid, raven: bool) -> Vec<(String, image::RgbaImage)> {
     let parts = split(default);
     let mut frames = Vec::new();
     let mut every = Frame::all();
-    every.extend((0..t2f::anim::LECTURE_FRAMES).map(Frame::Lecture));
     every.extend((0..t2f::anim::PUNCH_FRAMES).map(Frame::Punch));
     if raven {
         // The Professor's new moves (the negative twin keeps his old drawings).
@@ -1621,8 +1614,7 @@ fn raven_sheet() -> image::RgbaImage {
 /// A contact sheet of every whole-body drawing, then the two effects.
 fn contact_sheet(default: &Grid, scale: u32) -> image::RgbaImage {
     let parts = split(default);
-    let mut every = Frame::all();
-    every.extend((0..t2f::anim::LECTURE_FRAMES).map(Frame::Lecture));
+    let every = Frame::all();
     let cells: Vec<image::RgbaImage> = every.into_iter().map(|f| drawing_and_mark(&parts, f).0.to_png()).collect();
     let columns = 8u32;
     let (cw, ch) = (FRAME_W as u32 * scale, FULL_H as u32 * scale);

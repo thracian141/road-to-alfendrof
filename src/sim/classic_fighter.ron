@@ -4,7 +4,6 @@
 // anim picks the drawings: Soft (2), Hard (4) or Summon (6); crouching moves use crouching drawings.
 // air: true = used in the air (Light/Heavy while jumping, once per jump).
 // charge_frames: hold the button at the end of the startup to charge, up to this many frames;
-//   charge_bonus_pct: extra damage at full charge.
 // walk_pct: percent of walk speed kept while the move plays (0 = rooted).
 // hitbox: x = distance in front of the body centre, y = height above the feet, in pixels.
 //   A width of 0 means no melee hit (the Summon).
@@ -29,7 +28,7 @@
         (name: "Low Jab", button: Light, crouching: true, anim: Soft, walk_pct: 0,
          startup: 5, active: 3, recovery: 8, damage: 25, hitstun: 12, blockstun: 8, knockback: 2, hitstop: 4,
          hitbox: (x: 14, y: 0, w: 26, h: 12)),
-        (name: "Lecture", button: Heavy, crouching: false, anim: Lecture, walk_pct: 0,
+        (name: "Lecture", button: Heavy, crouching: false, anim: Hard, walk_pct: 0,
          startup: 26, active: 6, recovery: 18, damage: 70, hitstun: 22, blockstun: 14, knockback: 4, hitstop: 8,
          hitbox: (x: 6, y: 16, w: 48, h: 38)),
         (name: "Uppercut", button: Heavy, crouching: true, anim: Hard, walk_pct: 0,

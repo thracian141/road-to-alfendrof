@@ -41,10 +41,6 @@ pub enum Frame {
     Punch(usize),
     /// The leap: crouch, tucked in the air, then a kick with each leg.
     Kick(usize),
-    /// Lecture: breath, finger up, the lecture, finger down.
-    Lecture(usize),
-    /// Finger-gun volley: ready, left, right, left, recovery.
-    Gun(usize),
     /// Commanding the raven: finger up, arm out, recovery.
     Point(usize),
     /// Collar grab: beckon, pull, hold (talking), hold (quiet), shove, recover.
@@ -111,8 +107,6 @@ impl Frame {
             Frame::Hard(i) => format!("hard_{i}"),
             Frame::Summon(i) => format!("summon_{i}"),
             Frame::Speak(i) => format!("speak_{i}"),
-            Frame::Gun(i) => format!("gun_{i}"),
-            Frame::Lecture(i) => format!("lecture_{i}"),
             Frame::Punch(i) => format!("punch_{i}"),
             Frame::Kick(i) => format!("kick_{i}"),
             Frame::Point(i) => format!("point_{i}"),
@@ -163,9 +157,6 @@ pub const KICK_FRAMES: usize = 4;
 /// Roll drawings: the tuck, eight turns of the ball, the rise.
 pub const ROLL_DRAWINGS: usize = 10;
 
-/// Lecture drawings.
-pub const LECTURE_FRAMES: usize = 4;
-
 /// Raven command and collar grab drawings.
 pub const POINT_FRAMES: usize = 3;
 pub const GRAB_FRAMES: usize = 6;
@@ -179,9 +170,6 @@ pub const BOOST_FRAMES: usize = 4;
 /// Book-writing drawings.
 pub const WRITE_FRAMES: usize = 4;
 pub const LEAN_FRAMES: usize = 3;
-
-/// Finger-gun volley drawings.
-pub const GUN_FRAMES: usize = 5;
 
 /// Portal special drawings.
 pub const PORTAL_FRAMES: usize = 8;
@@ -207,9 +195,6 @@ pub const BAT_FRAMES: usize = 4;
 pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     let mut v = Frame::all();
     v.extend((0..ROLL_DRAWINGS).map(Frame::Roll));
-    if data.moves.iter().any(|m| m.anim == AnimKind::Volley) {
-        v.extend((0..GUN_FRAMES).map(Frame::Gun));
-    }
     if data.moves.iter().any(|m| m.anim == AnimKind::Punch) {
         v.extend((0..PUNCH_FRAMES).map(Frame::Punch));
         if data.punch_tweens {
@@ -218,9 +203,6 @@ pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     }
     if data.moves.iter().any(|m| m.anim == AnimKind::Kicks) {
         v.extend((0..KICK_FRAMES).map(Frame::Kick));
-    }
-    if data.moves.iter().any(|m| m.anim == AnimKind::Lecture) {
-        v.extend((0..LECTURE_FRAMES).map(Frame::Lecture));
     }
     if data.moves.iter().any(|m| m.anim == AnimKind::Point) {
         v.extend((0..POINT_FRAMES).map(Frame::Point));
@@ -558,29 +540,6 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
                 Frame::Boost(3)
             }
         }
-        AnimKind::Lecture => {
-            let third = (startup / 3).max(1);
-            Frame::Lecture(if frame <= third {
-                0
-            } else if frame <= mv.startup {
-                1
-            } else if frame <= mv.startup + mv.active {
-                2
-            } else {
-                3
-            })
-        }
-        AnimKind::Volley => {
-            let total = mv.volley.max(1);
-            if f.shots == 0 {
-                Frame::Gun(0)
-            } else if f.shots >= total && frame > mv.startup + (total - 1) * mv.volley_gap + 5 {
-                Frame::Gun(GUN_FRAMES - 1)
-            } else {
-                // hands alternate, left first
-                Frame::Gun(f.shots.min(3) as usize)
-            }
-        }
         AnimKind::Speak => Frame::Speak(if frame <= mv.startup { 0 } else { 1 }),
         AnimKind::Read => {
             // Unrolling the scroll, then reading: the two reading drawings alternate every 12
@@ -746,18 +705,6 @@ mod tests {
         assert_eq!(frame_for(&f, &d, false, 0), Frame::Punch(3), "left arm striking");
         let (c, d3) = attacking("Low Jab", 2);
         assert_eq!(frame_for(&c, &d3, false, 0), Frame::CrouchSoft(0));
-    }
-
-    #[test]
-    fn the_lecture_walks_through_four_drawings() {
-        let seen: Vec<_> = [1, 6, 15, 28, 40]
-            .into_iter()
-            .map(|frame| {
-                let (f, d) = attacking("Lecture", frame);
-                frame_for(&f, &d, false, 0)
-            })
-            .collect();
-        assert_eq!(seen, [Frame::Lecture(0), Frame::Lecture(0), Frame::Lecture(1), Frame::Lecture(2), Frame::Lecture(3)]);
     }
 
     fn junkhead() -> CharacterData {
