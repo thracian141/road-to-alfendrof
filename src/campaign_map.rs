@@ -27,8 +27,8 @@ pub struct Campaign {
     /// The map and level the cursor is on.
     pub map: usize,
     pub level: usize,
-    /// The fighter picked (index in the roster).
-    pub player: usize,
+    /// The fighter picked for the last level (index in the roster), if there was one.
+    pub player: Option<usize>,
     /// How the last fight went: `Some(true)` for a win.
     pub won: Option<bool>,
 }
@@ -172,7 +172,7 @@ fn spawn_campaign(
     commands.entity(name).insert((InfoName, Transform::from_xyz(8.0, -70.0, 8.0)));
     let line = spawn_text(&mut commands, state.clone(), String::new(), 8.0, Color::srgb(0.75, 0.7, 0.95), -92.0);
     commands.entity(line).insert((InfoLine, Transform::from_xyz(8.0, -84.0, 8.0)));
-    let hint = spawn_text(&mut commands, state, "A/D: map    W/S: level    Enter: fight    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -104.0);
+    let hint = spawn_text(&mut commands, state, "Arrows: level    Enter: fight    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -104.0);
     commands.entity(hint).insert(Transform::from_xyz(0.0, -97.0, 8.0));
 }
 
@@ -180,10 +180,8 @@ fn campaign_input(
     keys: Res<crate::MenuInput>,
     maps: Res<Maps>,
     saved: Res<Saved>,
-    roster: Res<Roster>,
-    stages: Res<Stages>,
     mut campaign: ResMut<Campaign>,
-    mut sel: ResMut<Selection>,
+    mut mode: ResMut<Mode>,
     mut next: ResMut<NextState<AppState>>,
     mut ui: MessageWriter<UiSound>,
 ) {
@@ -191,44 +189,69 @@ fn campaign_input(
         next.set(AppState::Title);
         return;
     }
+    // every arrow (and WASD) moves along the levels; past the last one of a map it goes on to the next map
     let pressed = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
-    let turn = pressed(KeyCode::KeyD, KeyCode::ArrowRight) as i32 - pressed(KeyCode::KeyA, KeyCode::ArrowLeft) as i32;
-    if turn != 0 {
-        let to = (campaign.map as i32 + turn).clamp(0, maps.0.maps.len() as i32 - 1) as usize;
-        if to != campaign.map {
-            campaign.map = to;
-            let map = &maps.0.maps[to];
-            campaign.level = if map.levels.is_empty() { 0 } else { saved.0.current(map) };
+    let forward = pressed(KeyCode::KeyD, KeyCode::ArrowRight) || pressed(KeyCode::KeyS, KeyCode::ArrowDown);
+    let back = pressed(KeyCode::KeyA, KeyCode::ArrowLeft) || pressed(KeyCode::KeyW, KeyCode::ArrowUp);
+    let dir = forward as i32 - back as i32;
+    let map = &maps.0.maps[campaign.map];
+    if dir != 0 {
+        let last = map.levels.len().saturating_sub(1);
+        let (from_map, from_level) = (campaign.map, campaign.level);
+        if map.levels.is_empty() {
+            if dir < 0 && campaign.map > 0 {
+                campaign.map -= 1;
+                campaign.level = maps.0.maps[campaign.map].levels.len().saturating_sub(1);
+            }
+        } else if dir > 0 && campaign.level == last {
+            if campaign.map + 1 < maps.0.maps.len() {
+                campaign.map += 1;
+                campaign.level = 0;
+            }
+        } else if dir < 0 && campaign.level == 0 {
+            if campaign.map > 0 {
+                campaign.map -= 1;
+                campaign.level = maps.0.maps[campaign.map].levels.len().saturating_sub(1);
+            }
+        } else {
+            campaign.level = saved.0.step(map, campaign.level, dir);
+        }
+        if (campaign.map, campaign.level) != (from_map, from_level) {
             ui.write(UiSound::Move);
         }
-    }
-    let map = &maps.0.maps[campaign.map];
-    if map.levels.is_empty() {
         return;
     }
-    let step = pressed(KeyCode::KeyS, KeyCode::ArrowDown) as i32 - pressed(KeyCode::KeyW, KeyCode::ArrowUp) as i32;
-    if step != 0 {
-        // (down goes back along the path, up goes on)
-        let to = saved.0.step(map, campaign.level, -step);
-        if to != campaign.level {
-            campaign.level = to;
-            ui.write(UiSound::Move);
-        }
+    if confirm_pressed(&keys.0) && !map.levels.is_empty() && saved.0.is_unlocked(map, campaign.level) {
+        // the fighter is chosen for each level; the fight starts from there (see `begin_level`)
+        *mode = Mode::VsCpu;
+        campaign.picking = true;
+        next.set(AppState::CharSelect);
     }
-    if confirm_pressed(&keys.0) && saved.0.is_unlocked(map, campaign.level) {
-        let level = &map.levels[campaign.level];
-        let player_name = roster.0[campaign.player].name.clone();
-        let rival = rival_for(level, &player_name);
-        let (Some(rival), Some(stage)) = (roster.0.iter().position(|c| c.name == rival), stages.0.iter().position(|s| s.name == level.stage)) else {
-            warn!("level {}: rival or stage not found", level.name);
-            return;
-        };
-        sel.chars[0] = campaign.player;
-        sel.chars[1] = rival;
-        sel.stage = stage;
-        campaign.active = Some((campaign.map, campaign.level));
-        campaign.won = None;
-        next.set(AppState::Fight);
+}
+
+/// Starts the level the cursor is on with the fighter just picked. Returns false if its rival or stage can't be found.
+pub fn begin_level(campaign: &mut Campaign, player: usize, maps: &Maps, roster: &Roster, stages: &Stages, sel: &mut Selection) -> bool {
+    let level = &maps.0.maps[campaign.map].levels[campaign.level];
+    let rival = rival_for(level, &roster.0[player].name);
+    let (Some(rival), Some(stage)) = (roster.0.iter().position(|c| c.name == rival), stages.0.iter().position(|s| s.name == level.stage)) else {
+        warn!("level {}: rival or stage not found", level.name);
+        return false;
+    };
+    campaign.player = Some(player);
+    sel.chars[0] = player;
+    sel.chars[1] = rival;
+    sel.stage = stage;
+    campaign.active = Some((campaign.map, campaign.level));
+    campaign.won = None;
+    campaign.picking = false;
+    true
+}
+
+/// The rival's name as the map shows it: the level's own until a fighter has been picked.
+fn shown_rival<'a>(level: &'a t2f::campaign::LevelData, roster: &Roster, campaign: &Campaign) -> &'a str {
+    match campaign.player {
+        Some(p) => rival_for(level, &roster.0[p].name),
+        None => &level.rival,
     }
 }
 
@@ -246,7 +269,7 @@ fn campaign_view(
     mut name: Single<&mut Text2d, (With<InfoName>, Without<MapTitle>, Without<InfoLine>)>,
     mut line: Single<&mut Text2d, (With<InfoLine>, Without<MapTitle>, Without<InfoName>)>,
     mut portrait: Single<&mut Sprite, (With<InfoPortrait>, Without<Node>, Without<Ring>)>,
-    mut shown: Local<Option<(usize, usize, usize)>>,
+    mut shown: Local<Option<(usize, usize, Option<usize>)>>,
 ) {
     let ease = 1.0 - (-14.0 * time.delta_secs()).exp();
     let want = -(campaign.map as f32) * MAP_STEP;
@@ -285,7 +308,7 @@ fn campaign_view(
     let (new_name, new_line) = match level {
         None => ("Coming soon".to_string(), String::new()),
         Some(level) => {
-            let rival = rival_for(level, &roster.0[campaign.player].name);
+            let rival = shown_rival(level, &roster, &campaign);
             let state = if saved.0.is_beaten(map, campaign.level) { "cleared" } else { "open" };
             (level.name.clone(), format!("vs {rival}    {}    {}", "*".repeat(level.difficulty as usize), state))
         }
@@ -302,7 +325,7 @@ fn campaign_view(
         match level {
             None => portrait.color = Color::srgb(0.2, 0.2, 0.3),
             Some(level) => {
-                let rival = rival_for(level, &roster.0[campaign.player].name);
+                let rival = shown_rival(level, &roster, &campaign);
                 if let Some(c) = roster.0.iter().find(|c| c.name == rival) {
                     let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
                     if crate::assets_dir().join(format!("portraits/{folder}.png")).exists() {

@@ -767,7 +767,6 @@ fn title_confirm(
     menu: Res<Menu>,
     mut page: ResMut<TitlePage>,
     mut mode: ResMut<Mode>,
-    mut campaign: ResMut<crate::campaign_map::Campaign>,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -800,8 +799,7 @@ fn title_confirm(
             }
             (TitlePage::Singleplayer, _) => {
                 *mode = Mode::VsCpu;
-                campaign.picking = true;
-                go(AppState::CharSelect);
+                go(AppState::Campaign);
             }
             (TitlePage::Multiplayer, 0) => {
                 *mode = Mode::Online;
@@ -833,6 +831,7 @@ fn char_confirm(
     mut picking: ResMut<Picking>,
     mut sel: ResMut<Selection>,
     mode: Res<Mode>,
+    roster: Res<Roster>,
     stages: Res<Stages>,
     mut header: Single<&mut Text2d, With<Header>>,
     mut next: ResMut<NextState<AppState>>,
@@ -840,6 +839,7 @@ fn char_confirm(
     mut info: ResMut<crate::online::OnlineInfo>,
     mut social: ResMut<crate::social::Social>,
     mut campaign: ResMut<crate::campaign_map::Campaign>,
+    maps: Res<crate::campaign_map::Maps>,
 ) {
     if *mode == Mode::Online && social.in_room() {
         if back_pressed(&keys.0) { social.leave(); info.locked=false; next.set(AppState::Social); }
@@ -863,7 +863,9 @@ fn char_confirm(
         }
         return;
     }
-    if back_pressed(&keys.0) {
+    if campaign.picking && back_pressed(&keys.0) {
+        next.set(AppState::Campaign);
+    } else if back_pressed(&keys.0) {
         if picking.0 > 0 {
             picking.0 -= 1;
             header.0 = pick_title(picking.0, *mode);
@@ -873,9 +875,10 @@ fn char_confirm(
     } else if confirm_pressed(&keys.0) {
         sel.chars[picking.0] = menu.cursor;
         if campaign.picking {
-            // the campaign takes one pick; the rivals and stages come with the levels
-            campaign.player = menu.cursor;
-            next.set(AppState::Campaign);
+            // the campaign takes one pick; the rival and stage come with the level
+            if crate::campaign_map::begin_level(&mut campaign, menu.cursor, &maps, &roster, &stages, &mut sel) {
+                next.set(AppState::Fight);
+            }
         } else if picking.0 + 1 < if *mode == Mode::LocalTeams { 4 } else { 2 } {
             picking.0 += 1;
             header.0 = pick_title(picking.0, *mode);
