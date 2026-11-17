@@ -1,19 +1,18 @@
-// The campaign. A map is a picture (576 x 324, shown 384 x 216 units wide) with the circles of its levels on it; a level is
+// The campaign. A map is a picture (shown 384 x 224 units) with the circles of its levels on it; a level is
 // a fight against a fixed rival on a stage. Stage and rival are names from assets/stages and assets/characters. Levels
-// unlock in the order listed. `at` is where the circle goes, in those units from the picture's top left. The pictures come
-// from `python tools/gen_city_map.py`.
+// unlock in the order listed. `at` is where the circle goes, in those units from the picture's top left.
 (
     maps: [
         (
             id: "the_city",
             name: "The City",
-            image: "ui/campaign/the_city.png",
+            image: "campaign_maps/campaign_map1_istanbul.png",
             levels: [
-                (name: "Istanbul Courtyard", at: (30, 40), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
-                (name: "Level 2", at: (80, 82), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
-                (name: "Level 3", at: (123, 80), stage: "Istanbul Courtyard", rival: "Junkhead", difficulty: 3),
-                (name: "Level 4", at: (213, 46), stage: "Istanbul Courtyard", rival: "Gray Persona", difficulty: 4),
-                (name: "Galata Tower", at: (113, 42), stage: "Galata Tower", rival: "Goblin King", difficulty: 5, boss: true),
+                (name: "Istanbul Courtyard", at: (63, 105), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
+                (name: "Level 2", at: (117, 77), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
+                (name: "Level 3", at: (161, 55), stage: "Istanbul Courtyard", rival: "Junkhead", difficulty: 3),
+                (name: "Level 4", at: (185, 105), stage: "Istanbul Courtyard", rival: "Gray Persona", difficulty: 4),
+                (name: "Galata Tower", at: (109, 35), stage: "Galata Tower", rival: "Goblin King", difficulty: 5, boss: true),
             ],
         ),
         (

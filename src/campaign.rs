@@ -14,7 +14,7 @@ pub struct MapData {
     pub id: String,
     /// Shown as the map's title.
     pub name: String,
-    /// The picture (path under `assets/`), 576 x 324, shown 384 x 216 units wide.
+    /// The picture (path under `assets/`), shown 384 x 224 units.
     pub image: String,
     /// Levels in the order they are played; none on a map that is only a preview.
     #[serde(default)]
@@ -24,7 +24,7 @@ pub struct MapData {
 #[derive(Clone, Debug, Deserialize)]
 pub struct LevelData {
     pub name: String,
-    /// Where its circle is, in map units (384 x 216) from the picture's top left.
+    /// Where its circle is, in map units (384 x 224) from the picture's top left.
     pub at: (i32, i32),
     /// A stage's name (see `assets/stages`).
     pub stage: String,
@@ -143,7 +143,7 @@ mod tests {
                 assert!(characters.iter().any(|c| *c == level.rival), "{}: rival {}", level.name, level.rival);
                 assert!(stages.iter().any(|s| *s == level.stage), "{}: stage {}", level.name, level.stage);
                 assert!((1..=5).contains(&level.difficulty), "{}: difficulty", level.name);
-                assert!((0..384).contains(&level.at.0) && (0..216).contains(&level.at.1), "{}: inside the map", level.name);
+                assert!((0..384).contains(&level.at.0) && (0..224).contains(&level.at.1), "{}: inside the map", level.name);
             }
         }
     }

@@ -63,7 +63,7 @@ impl Plugin for CampaignPlugin {
 /// Distance between two maps side by side, in map units.
 const MAP_STEP: f32 = 600.0;
 const MAP_W: f32 = 384.0;
-const MAP_H: f32 = 216.0;
+const MAP_H: f32 = 224.0;
 
 #[derive(Component)]
 struct MapRoot;
@@ -79,6 +79,11 @@ struct InfoName;
 struct InfoLine;
 #[derive(Component)]
 struct InfoPortrait;
+
+/// The map picture is bigger than it is shown, so it is scaled smoothly instead of by nearest pixel.
+fn smooth(assets: &AssetServer, path: String) -> Handle<Image> {
+    assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.sampler = bevy::image::ImageSampler::linear()).load(path)
+}
 
 fn node_image(map: &MapData, level: usize, progress: &Progress) -> &'static str {
     if map.levels[level].boss && progress.is_unlocked(map, level) && !progress.is_beaten(map, level) {
@@ -122,7 +127,7 @@ fn spawn_campaign(
             for (m, map) in maps.0.maps.iter().enumerate() {
                 let x = m as f32 * MAP_STEP;
                 root.spawn((
-                    Sprite { image: assets.load(map.image.clone()), custom_size: Some(Vec2::new(MAP_W, MAP_H)), ..default() },
+                    Sprite { image: smooth(&assets, map.image.clone()), custom_size: Some(Vec2::new(MAP_W, MAP_H)), ..default() },
                     Transform::from_xyz(x, 0.0, -5.0),
                 ));
                 // a dotted trail from level to level
