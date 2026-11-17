@@ -55,7 +55,7 @@ pub enum Frame {
     Lean(usize),
     /// Writing in a book: it opens, two strokes alternate while he writes, a flourish at the end.
     Write(usize),
-    /// The roll: tuck in, a tight ball turning in eighths of a turn (1..=8), then rise (9).
+    /// The roll: crouch, plant hands, tuck over a shoulder, land and recover.
     Roll(usize),
     /// The portal special: stepping back, leaping into the portal, the bite, recovery.
     Portal(usize),
@@ -358,8 +358,8 @@ pub const STAR_FRAMES: usize = 2;
 /// Ticks each walking drawing is held (six make a stride).
 const WALK_TICKS: u32 = 5;
 
-/// Which roll drawing to show: tuck in, a ball turning an eighth every two frames, then rise. A
-/// backward roll turns the other way.
+/// Play the shoulder-roll drawings, keeping anticipation and recovery upright.
+/// Backward movement unwinds the tuck but still ends with the landing drawings.
 fn roll_drawing(f: &Fighter) -> usize {
     let t = f.state_frame;
     if t <= 3 {
@@ -367,8 +367,12 @@ fn roll_drawing(f: &Fighter) -> usize {
     } else if t >= 21 {
         ROLL_DRAWINGS - 1
     } else {
-        let step = ((t - 4) / 2) as usize % 8;
-        if f.move_dir * f.facing > 0 { 1 + step } else { 8 - step }
+        let step = (((t - 4) / 2) as usize).min(7);
+        if f.move_dir * f.facing > 0 {
+            1 + step
+        } else {
+            [7, 5, 4, 3, 2, 1, 7, 8][step]
+        }
     }
 }
 
@@ -763,6 +767,23 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_roll_directions_land_before_standing_up() {
+        for facing in [-1, 1] {
+            for direction in [-1, 1] {
+                let mut f = Fighter::new(0, facing);
+                f.state = FighterState::Roll;
+                f.move_dir = direction;
+                f.state_frame = 0;
+                assert_eq!(roll_drawing(&f), 0, "anticipate from a crouch");
+                f.state_frame = 20;
+                assert_eq!(roll_drawing(&f), 8, "land before recovering in either direction");
+                f.state_frame = 21;
+                assert_eq!(roll_drawing(&f), 9, "recover to the standing stance");
+            }
+        }
+    }
 
     fn ayz() -> CharacterData {
         CharacterData::from_ron(include_str!("sim/classic_fighter.ron")).unwrap()

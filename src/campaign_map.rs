@@ -80,8 +80,13 @@ struct InfoLine;
 #[derive(Component)]
 struct InfoPortrait;
 
+/// Preserve the native pixels when campaign artwork is scaled to its map size.
+fn map_image(assets: &AssetServer, path: String) -> Handle<Image> {
+    assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.sampler = bevy::image::ImageSampler::nearest()).load(path)
+}
+
 /// The map picture is bigger than it is shown, so it is scaled smoothly instead of by nearest pixel.
-fn smooth(assets: &AssetServer, path: String) -> Handle<Image> {
+pub(crate) fn smooth(assets: &AssetServer, path: String) -> Handle<Image> {
     assets.load_builder().with_settings(|s: &mut bevy::image::ImageLoaderSettings| s.sampler = bevy::image::ImageSampler::linear()).load(path)
 }
 
@@ -127,7 +132,7 @@ fn spawn_campaign(
             for (m, map) in maps.0.maps.iter().enumerate() {
                 let x = m as f32 * MAP_STEP;
                 root.spawn((
-                    Sprite { image: smooth(&assets, map.image.clone()), custom_size: Some(Vec2::new(MAP_W, MAP_H)), ..default() },
+                    Sprite { image: map_image(&assets, map.image.clone()), custom_size: Some(Vec2::new(MAP_W, MAP_H)), ..default() },
                     Transform::from_xyz(x, 0.0, -5.0),
                 ));
                 // a dotted trail from level to level

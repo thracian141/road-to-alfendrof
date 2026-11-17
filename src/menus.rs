@@ -350,7 +350,7 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     commands.spawn((
         DespawnOnExit(state.clone()),
         FillView,
-        Sprite { image: asset_server.load("backgrounds/galata/near.png"), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
+        Sprite { image: crate::campaign_map::smooth(&asset_server, "campaign_maps/campaign_map1_istanbul.png".into()), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
         Transform::from_xyz(0.0, 0.0, -8.0),
     ));
     // Keep the menu readable and extend its dark band to the bottom of any window shape.
@@ -375,7 +375,7 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     let tagline = spawn_text(&mut commands, state.clone(), "A T2SSR Brawl".into(), 9.0, Color::srgb(0.98, 0.92, 0.72), 8.0);
     commands.entity(tagline).insert(Transform::from_xyz(0.0, 8.0, 5.0));
     // Keep the version above the logo, clear of the footer's controls and sound credits.
-    let version = spawn_text(&mut commands, state.clone(), format!("v{}", env!("CARGO_PKG_VERSION")), 8.0, Color::srgb(0.12, 0.08, 0.22), 96.0);
+    let version = spawn_text(&mut commands, state.clone(), format!("v{}", env!("CARGO_PKG_VERSION")), 8.0, Color::srgb(0.96, 0.94, 0.88), 96.0);
     commands.entity(version).insert((Transform::from_xyz(172.0, 96.0, 5.0), bevy::sprite::Anchor::CENTER_RIGHT));
 
     let white = Color::WHITE;
