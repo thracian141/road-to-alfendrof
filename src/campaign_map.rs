@@ -275,7 +275,15 @@ fn campaign_view(
     mut line: Single<&mut Text2d, (With<InfoLine>, Without<MapTitle>, Without<InfoName>)>,
     mut portrait: Single<&mut Sprite, (With<InfoPortrait>, Without<Node>, Without<Ring>)>,
     mut shown: Local<Option<(usize, usize, Option<usize>)>>,
+    mut keep: Local<Vec<Handle<Image>>>,
 ) {
+    // the circle pictures stay loaded: swapping a ring for the other frame would otherwise drop the one it leaves, and it
+    // would have to load again (a flash) the next time round
+    if keep.is_empty() {
+        for name in ["node_open", "node_done", "node_locked", "node_boss", "node_select_0", "node_select_1"] {
+            keep.push(assets.load(format!("ui/campaign/{name}.png")));
+        }
+    }
     let ease = 1.0 - (-14.0 * time.delta_secs()).exp();
     let want = -(campaign.map as f32) * MAP_STEP;
     root.translation.x += (want - root.translation.x) * ease;

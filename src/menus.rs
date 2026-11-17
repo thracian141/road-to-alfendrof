@@ -162,7 +162,7 @@ pub struct FillView;
 #[derive(Component)]
 struct TitleBottomShade;
 
-const TITLE_SHADE_TOP: f32 = 0.0;
+const TITLE_SHADE_TOP: f32 = -78.0;
 
 fn visible_menu_size(aspect: f32) -> Vec2 {
     let base = Vec2::new(crate::VIEW_W, crate::VIEW_H);
@@ -350,10 +350,11 @@ fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res
     commands.spawn((
         DespawnOnExit(state.clone()),
         FillView,
-        Sprite { image: crate::campaign_map::smooth(&asset_server, "campaign_maps/campaign_map1_istanbul.png".into()), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
+        Sprite { image: crate::campaign_map::smooth(&asset_server, "ui/campaign/the_city.png".into()), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
         Transform::from_xyz(0.0, 0.0, -8.0),
     ));
     // Keep the menu readable and extend its dark band to the bottom of any window shape.
+    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.78), Vec2::new(150.0, 52.0)), Transform::from_xyz(0.0, -24.0, 1.0)));
     commands.spawn((DespawnOnExit(state.clone()), TitleBottomShade, Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.82), Vec2::new(384.0, 94.0)), Transform::from_xyz(0.0, -61.0, 1.0)));
     commands.spawn((
         DespawnOnExit(state.clone()),

@@ -6,7 +6,7 @@
         (
             id: "the_city",
             name: "The City",
-            image: "campaign_maps/campaign_map1_istanbul.png",
+            image: "ui/campaign/the_city.png",
             levels: [
                 (name: "Ataşehir", at: (339, 79), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
                 (name: "Kadıköy Moda", at: (206, 154), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
