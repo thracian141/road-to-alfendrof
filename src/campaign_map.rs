@@ -160,19 +160,20 @@ fn spawn_campaign(
     // the name of the map, and the level below
     let title = spawn_text(&mut commands, state.clone(), String::new(), 16.0, Color::srgb(1.0, 0.9, 0.4), 94.0);
     commands.entity(title).insert((MapTitle, Transform::from_xyz(0.0, 94.0, 8.0)));
-    spawn_panel_sized(&mut commands, state.clone(), Vec2::new(372.0, 40.0), Vec2::new(0.0, -86.0));
+    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.8), Vec2::new(150.0, 20.0)), Transform::from_xyz(0.0, 94.0, 7.0)));
+    spawn_panel_sized(&mut commands, state.clone(), Vec2::new(372.0, 50.0), Vec2::new(0.0, -83.0));
     commands.spawn((
         DespawnOnExit(state.clone()),
         InfoPortrait,
         Sprite::from_color(Color::srgb(0.2, 0.2, 0.3), Vec2::splat(30.0)),
-        Transform::from_xyz(-160.0, -86.0, 8.0),
+        Transform::from_xyz(-160.0, -80.0, 8.0),
     ));
     let name = spawn_text(&mut commands, state.clone(), String::new(), 16.0, Color::WHITE, -80.0);
-    commands.entity(name).insert((InfoName, Transform::from_xyz(8.0, -79.0, 8.0)));
+    commands.entity(name).insert((InfoName, Transform::from_xyz(8.0, -70.0, 8.0)));
     let line = spawn_text(&mut commands, state.clone(), String::new(), 8.0, Color::srgb(0.75, 0.7, 0.95), -92.0);
-    commands.entity(line).insert((InfoLine, Transform::from_xyz(8.0, -92.0, 8.0)));
+    commands.entity(line).insert((InfoLine, Transform::from_xyz(8.0, -84.0, 8.0)));
     let hint = spawn_text(&mut commands, state, "A/D: map    W/S: level    Enter: fight    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -104.0);
-    commands.entity(hint).insert(Transform::from_xyz(0.0, -104.0, 8.0));
+    commands.entity(hint).insert(Transform::from_xyz(0.0, -97.0, 8.0));
 }
 
 fn campaign_input(
