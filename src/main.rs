@@ -272,7 +272,8 @@ fn dev_screenshot(
             commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.clone()));
             *taken_at = Some(now);
         }
-        Some(at) if now - at > 1.5 => {
+        // (on a machine that draws in software the frame can take a while to come back: wait for the file)
+        Some(at) if (now - at > 1.5 && std::path::Path::new(path).exists()) || now - at > 40.0 => {
             exit.write(AppExit::Success);
         }
         _ => {}
