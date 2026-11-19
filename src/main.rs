@@ -70,6 +70,8 @@ pub enum AppState {
     CharSelect,
     /// The campaign's maps.
     Campaign,
+    /// Clears the previous fight before spawning the next campaign opponent.
+    CampaignEncounter,
     StageSelect,
     Online,
     Social,
@@ -392,7 +394,7 @@ fn main() {
         .insert_resource(Roster({
             // characters marked `menu_last` go to the end
             let mut roster = load_dir("characters", CharacterData::from_ron);
-            roster.sort_by_key(|c| c.menu_last);
+            roster.sort_by_key(|c| (c.campaign_only, c.menu_last));
             roster
         }))
         .insert_resource(Stages(load_dir("stages", StageData::from_ron)))
@@ -993,7 +995,10 @@ fn sync_hud(
         timer.0 = new_timer;
     }
 
-    let name = |i: usize| roster.0[sel.chars[i]].name.clone();
+    let name = |i: usize| {
+        let c = &roster.0[sel.chars[i]];
+        if c.campaign_only { "Opponent".to_string() } else { c.name.clone() }
+    };
     let new_banner = match s.phase {
         // 3, 2, 1, then FIGHT! for the first moments of the round
         Phase::Countdown(0) if waiting => "Connecting...".to_string(),
@@ -1015,6 +1020,7 @@ fn sync_hud(
     let new_sub = match s.phase {
         _ if waiting => "Waiting for the other players...".to_string(),
         Phase::MatchOver => campaign_map::banner_line(&campaign, *mode).unwrap_or("Enter: rematch    Esc: menu").to_string(),
+        Phase::Countdown(_) if campaign.active.is_some() => format!("Fight {}/{}    Round {}", campaign.encounter + 1, campaign.opponents.len(), s.round),
         Phase::Countdown(_) => format!("Round {}", s.round),
         _ => String::new(),
     };
@@ -1051,9 +1057,9 @@ fn restart_match(
     input: Res<MenuInput>,
     mut sim: ResMut<Sim>,
     roster: Res<Roster>,
-    sel: Res<Selection>,
+    mut sel: ResMut<Selection>,
     mode: Res<Mode>,
-    campaign: Res<campaign_map::Campaign>,
+    mut campaign: ResMut<campaign_map::Campaign>,
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
     mut was_over: Local<bool>,
@@ -1068,9 +1074,13 @@ fn restart_match(
             commands.remove_resource::<online::NetSession>();
             next.set(AppState::Social);
         } else if campaign.active.is_some() && campaign.won == Some(true) {
-            // a level won: back to the map, where the next one is open
-            next.set(AppState::Campaign);
+            if campaign.advance(&mut sel) {
+                next.set(AppState::CampaignEncounter);
+            } else {
+                next.set(AppState::Campaign);
+            }
         } else {
+            campaign.won = None;
             *sim = fresh_sim(&roster, &sel, *mode, false);
         }
     }
@@ -1103,6 +1113,28 @@ fn leave_fight(keys: Res<MenuInput>, sim: Res<Sim>, pause: Res<menus::Pause>, ca
 mod controller_tests {
     use super::*;
     use bevy::input::gamepad::GamepadButton as B;
+
+    #[test]
+    fn campaign_confirm_loads_next_opponent_before_returning_to_the_map() {
+        let mut app = App::new();
+        let data = CharacterData::from_ron(include_str!("sim/classic_fighter.ron")).unwrap();
+        let mut sim = Sim::default();
+        sim.0.phase = Phase::MatchOver;
+        app.insert_resource(sim).insert_resource(Roster(vec![data.clone(), data.clone(), data]))
+            .insert_resource(Selection::default()).insert_resource(Mode::VsCpu)
+            .insert_resource(campaign_map::Campaign { active: Some((0, 0)), opponents: vec![1, 2], won: Some(true), ..default() })
+            .init_resource::<MenuInput>().init_resource::<NextState<AppState>>()
+            .add_systems(Update, restart_match);
+        app.update();
+        app.world_mut().resource_mut::<MenuInput>().0.press(KeyCode::Enter);
+        app.update();
+        assert_eq!(app.world().resource::<Selection>().chars[1], 2);
+        assert_eq!(app.world().resource::<campaign_map::Campaign>().encounter, 1);
+        assert!(matches!(app.world().resource::<NextState<AppState>>(), NextState::Pending(AppState::CampaignEncounter)));
+        app.world_mut().resource_mut::<campaign_map::Campaign>().won = Some(true);
+        app.update();
+        assert!(matches!(app.world().resource::<NextState<AppState>>(), NextState::Pending(AppState::Campaign)));
+    }
 
     #[test]
     fn surrender_confirmation_cannot_immediately_start_a_rematch() {

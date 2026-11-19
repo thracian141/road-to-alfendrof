@@ -5,6 +5,9 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 pub struct CharacterData {
     pub name: String,
+    /// Unnamed opponents used only in campaign encounter sequences.
+    #[serde(default)]
+    pub campaign_only: bool,
     /// Second line, shown only in the character select.
     #[serde(default)]
     pub subtitle: Option<String>,

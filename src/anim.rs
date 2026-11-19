@@ -368,7 +368,8 @@ fn roll_drawing(f: &Fighter) -> usize {
         ROLL_DRAWINGS - 1
     } else {
         let step = (((t - 4) / 2) as usize).min(7);
-        if f.move_dir * f.facing > 0 {
+        // Bat rolls are a wingbeat cycle, not a somersault to play backward.
+        if f.bat_roll || f.move_dir * f.facing > 0 {
             1 + step
         } else {
             [7, 5, 4, 3, 2, 1, 7, 8][step]
@@ -767,6 +768,24 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bat_rolls_keep_their_wingbeat_cycle_in_both_directions() {
+        let data = CharacterData::from_ron(include_str!("../assets/characters/gray_persona.ron")).unwrap();
+        assert!(data.bat_form().is_some());
+        for direction in [-1, 1] {
+            let mut f = Fighter::new(0, 1);
+            f.state = FighterState::Roll;
+            f.bat_roll = true;
+            f.move_dir = direction;
+            for step in 0..8 {
+                f.state_frame = 4 + step * 2;
+                assert_eq!(frame_for(&f, &data, false, 0), Frame::Roll(1 + step as usize));
+            }
+            f.state_frame = 21;
+            assert_eq!(frame_for(&f, &data, false, 0), Frame::Roll(9));
+        }
+    }
 
     #[test]
     fn both_roll_directions_land_before_standing_up() {

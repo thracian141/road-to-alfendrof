@@ -6,13 +6,39 @@
         (
             id: "the_city",
             name: "The City",
-            image: "ui/campaign/the_city.png",
+            image: "campaign_maps/campaign_map1_istanbul.png",
             levels: [
                 (name: "Ataşehir", at: (339, 79), stage: "Istanbul Courtyard", rival: "Katmata", difficulty: 1),
                 (name: "Kadıköy Moda", at: (206, 154), stage: "Istanbul Courtyard", rival: "Anaran", difficulty: 2),
                 (name: "Ümraniye", at: (351, 37), stage: "Istanbul Courtyard", rival: "Junkhead", difficulty: 3),
                 (name: "Fatih", at: (98, 110), stage: "Istanbul Courtyard", rival: "Gray Persona", difficulty: 4),
                 (name: "Galata Tower", at: (124, 42), stage: "Galata Tower", rival: "Goblin King", difficulty: 5, boss: true),
+            ],
+        ),
+        (
+            id: "foreign_lands",
+            name: "The Foreign Lands",
+            image: "campaign_maps/campaign_map2_plovdiv.png",
+            theme: ForeignLands,
+            levels: [
+                (name: "Assgrad", at: (273, 124), stage: "Assgrad", rival: "Katmata", difficulty: 1),
+                (name: "The Rhodopes", at: (280, 181), stage: "Assgrad", rival: "Haymaker", difficulty: 2),
+                // The repeated Katmata fight and these stages are temporary.
+                (name: "Trakia", at: (232, 65), stage: "Assgrad", rival: "Katmata", difficulty: 3),
+                (name: "Plovdiv Old Town", at: (107, 58), stage: "Assgrad", rival: "Cowboy From Hell", difficulty: 4),
+                (name: "Asen's Fortress", at: (326, 177), stage: "Assgrad", rival: "Junkhead", difficulty: 5, boss: true),
+            ],
+        ),
+        (
+            id: "snow_forests",
+            name: "Snow Forests",
+            image: "campaign_maps/campaign_map3_turku_aland.png",
+            theme: SnowForests,
+            levels: [
+                // Existing stages are temporary until dedicated northern arenas are available.
+                (name: "Islands Port", at: (85, 158), stage: "Oulu City Council", rival: "Haymaker", difficulty: 2),
+                (name: "Cathedral of Many Riches", at: (321, 75), stage: "Oulu City Council", rival: "Goblin King", difficulty: 4),
+                (name: "High Castle", at: (294, 161), stage: "Oulu City Council", rival: "Anaran", difficulty: 5, boss: true),
             ],
         ),
         (

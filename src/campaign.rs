@@ -16,9 +16,19 @@ pub struct MapData {
     pub name: String,
     /// The picture (path under `assets/`), shown 384 x 224 units.
     pub image: String,
+    #[serde(default)]
+    pub theme: MapTheme,
     /// Levels in the order they are played; none on a map that is only a preview.
     #[serde(default)]
     pub levels: Vec<LevelData>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum MapTheme {
+    #[default]
+    Istanbul,
+    ForeignLands,
+    SnowForests,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -44,9 +54,28 @@ impl CampaignData {
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str(text)
     }
+
+    /// Browsing includes locked levels and preview maps; only starting a fight checks progress.
+    pub fn browse(&self, map: usize, level: usize, dir: i32) -> (usize, usize) {
+        let last = self.maps[map].levels.len().saturating_sub(1);
+        if dir > 0 {
+            if level < last { (map, level + 1) }
+            else if map + 1 < self.maps.len() { (map + 1, 0) }
+            else { (map, level) }
+        } else if dir < 0 {
+            if level > 0 { (map, level - 1) }
+            else if map > 0 { (map - 1, self.maps[map - 1].levels.len().saturating_sub(1)) }
+            else { (map, level) }
+        } else { (map, level) }
+    }
 }
 
 impl MapData {
+    /// Every level has two preliminary fights; the last playable level has three.
+    pub fn preliminary_count(&self, level: usize) -> usize {
+        if level + 1 == self.levels.len() { 3 } else { 2 }
+    }
+
     /// The name a level is saved under.
     pub fn level_id(&self, level: usize) -> String {
         format!("{}/{}", self.id, level + 1)
@@ -66,9 +95,39 @@ pub fn rival_for<'a>(level: &'a LevelData, player: &str) -> &'a str {
 pub struct Progress {
     #[serde(default)]
     pub beaten: Vec<String>,
+    /// Last playable campaign visited, used by the home screen across launches.
+    #[serde(default)]
+    pub last_map: Option<String>,
 }
 
 impl Progress {
+    /// Finish the earlier campaigns before starting this one. Empty previews are never playable.
+    pub fn campaign_unlocked(&self, campaign: &CampaignData, map: usize) -> bool {
+        campaign.maps.get(map).is_some_and(|m| !m.levels.is_empty())
+            && campaign.maps[..map].iter().all(|m| (0..m.levels.len()).all(|l| self.is_beaten(m, l)))
+    }
+
+    pub fn can_play(&self, campaign: &CampaignData, map: usize, level: usize) -> bool {
+        self.campaign_unlocked(campaign, map)
+            && level < campaign.maps[map].levels.len()
+            && self.is_unlocked(&campaign.maps[map], level)
+    }
+
+    pub fn last_campaign(&self, campaign: &CampaignData) -> usize {
+        self.last_map.as_deref()
+            .and_then(|id| campaign.maps.iter().position(|m| m.id == id && !m.levels.is_empty()))
+            .unwrap_or_else(|| campaign.maps.iter().position(|m| !m.levels.is_empty()).unwrap_or(0))
+    }
+
+    /// Preview-only maps do not replace the last real campaign on the title.
+    pub fn visit(&mut self, map: &MapData) -> bool {
+        if map.levels.is_empty() || self.last_map.as_deref() == Some(&map.id) {
+            return false;
+        }
+        self.last_map = Some(map.id.clone());
+        true
+    }
+
     pub fn is_beaten(&self, map: &MapData, level: usize) -> bool {
         self.beaten.contains(&map.level_id(level))
     }
@@ -157,13 +216,83 @@ mod tests {
         assert_eq!(city.levels[0].stage, "Istanbul Courtyard");
         let last = city.levels.last().unwrap();
         assert_eq!((last.name.as_str(), last.stage.as_str(), last.boss), ("Galata Tower", "Galata Tower", true));
-        assert!(campaign.maps[1].levels.is_empty(), "the second map is only a preview");
+        assert!(campaign.maps[3].levels.is_empty(), "the next map is only a preview");
         // the circles don't sit on top of each other
         for (i, a) in city.levels.iter().enumerate() {
             for b in &city.levels[i + 1..] {
                 assert!((a.at.0 - b.at.0).abs() + (a.at.1 - b.at.1).abs() > 20, "{} and {} overlap", a.name, b.name);
             }
         }
+    }
+
+    #[test]
+    fn foreign_lands_has_the_requested_five_opponents_and_temporary_stage() {
+        let campaign = data();
+        let map = &campaign.maps[1];
+        assert_eq!(map.name, "The Foreign Lands");
+        assert_eq!(map.theme, MapTheme::ForeignLands);
+        assert_eq!(map.levels.len(), 5);
+        assert_eq!(map.levels[0].name, "Assgrad");
+        let rivals: Vec<_> = map.levels.iter().map(|l| l.rival.as_str()).collect();
+        assert_eq!(rivals, ["Katmata", "Haymaker", "Katmata", "Cowboy From Hell", "Junkhead"]);
+        assert!(map.levels.iter().all(|l| l.stage == "Assgrad"));
+        assert!(map.levels[4].boss);
+        assert!(map.levels[..4].iter().all(|l| !l.boss));
+    }
+
+    #[test]
+    fn browsing_locked_campaigns_does_not_allow_starting_them() {
+        let campaign = data();
+        let mut progress = Progress::default();
+        let mut cursor = (0, 0);
+        for _ in 0..10 { cursor = campaign.browse(cursor.0, cursor.1, 1); }
+        assert_eq!(cursor, (2, 0));
+        assert!(progress.can_play(&campaign, 0, 0));
+        assert!(!progress.can_play(&campaign, 0, 1));
+        assert!(!progress.can_play(&campaign, 1, 0));
+        assert!(!progress.can_play(&campaign, 2, 0));
+        for l in 0..campaign.maps[0].levels.len() { progress.beat(&campaign.maps[0], l); }
+        assert!(progress.can_play(&campaign, 1, 0));
+        assert!(!progress.can_play(&campaign, 1, 1));
+        assert!(!progress.can_play(&campaign, 2, 0));
+        for l in 0..campaign.maps[1].levels.len() { progress.beat(&campaign.maps[1], l); }
+        assert!(progress.can_play(&campaign, 2, 0));
+        assert!(!progress.can_play(&campaign, 3, 0));
+        assert_eq!(campaign.browse(3, 0, -1), (2, 2));
+        assert_eq!(campaign.browse(0, 0, -1), (0, 0));
+        assert_eq!(campaign.browse(3, 0, 1), (3, 0));
+    }
+
+    #[test]
+    fn snow_forests_has_three_fights_and_remembers_its_home_background() {
+        let campaign = data();
+        let map = &campaign.maps[2];
+        assert_eq!(map.name, "Snow Forests");
+        assert_eq!(map.theme, MapTheme::SnowForests);
+        assert_eq!(map.levels.iter().map(|l| l.rival.as_str()).collect::<Vec<_>>(), ["Haymaker", "Goblin King", "Anaran"]);
+        assert!(map.levels[2].boss);
+        assert!(map.levels[..2].iter().all(|l| !l.boss));
+        let mut progress = Progress::default();
+        progress.visit(map);
+        assert_eq!(Progress::from_ron(&progress.to_ron()).last_campaign(&campaign), 2);
+    }
+
+    #[test]
+    fn last_campaign_survives_restart_without_resetting_level_progress() {
+        let campaign = data();
+        let mut progress = Progress::from_ron("(beaten: [\"the_city/1\"])");
+        assert_eq!(progress.last_campaign(&campaign), 0);
+        assert!(progress.visit(&campaign.maps[1]));
+        assert!(!progress.visit(&campaign.maps[1]));
+        let mut restored = Progress::from_ron(&progress.to_ron());
+        assert_eq!(restored.last_campaign(&campaign), 1);
+        assert!(restored.is_beaten(&campaign.maps[0], 0));
+        assert!(!restored.visit(&campaign.maps[3]), "a preview is not a campaign");
+        assert_eq!(restored.last_campaign(&campaign), 1);
+        assert!(restored.visit(&campaign.maps[0]));
+        assert_eq!(restored.last_campaign(&campaign), 0);
+        restored.last_map = Some("removed_campaign".into());
+        assert_eq!(restored.last_campaign(&campaign), 0);
     }
 
     #[test]

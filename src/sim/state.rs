@@ -2922,6 +2922,38 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_campaign_fighters_only_damage_with_punches_and_kicks() {
+        for index in 1..=8 {
+            let path = format!("assets/characters/generic_{index:02}.ron");
+            let data = CharacterData::from_ron(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert!(data.campaign_only && data.name.is_empty());
+            assert_eq!(data.moves.len(), 6);
+            assert!(data.moves.iter().all(|m| m.button != Button::Special && m.projectile.is_none() && m.minions.is_none()));
+            for button in [Input::LIGHT, Input::HEAVY] {
+                let mut s = GameState::new();
+                s.fighters[1].x = s.fighters[0].x + 30 * PX;
+                let health = s.fighters[1].health;
+                s.step([Input(button), Input(0)], [&data, &data]);
+                for _ in 0..40 { s.step([Input(0), Input(0)], [&data, &data]); }
+                assert!(s.fighters[1].health < health, "{index}: punch/kick must connect");
+            }
+            let mut s = GameState::new();
+            s.fighters[1].x = s.fighters[0].x + 20 * PX;
+            let health = s.fighters[1].health;
+            s.fighters[0].meter = Fighter::METER_MAX;
+            s.step([Input(Input::SPECIAL), Input(0)], [&data, &data]);
+            assert_ne!(s.fighters[0].state, FighterState::Attack);
+            s.step([Input(Input::UP), Input(0)], [&data, &data]);
+            for _ in 0..6 { s.step([Input(0), Input(0)], [&data, &data]); }
+            for _ in 0..90 {
+                s.step([Input(Input::DOWN), Input(0)], [&data, &data]);
+                assert!(!s.fighters[0].slamming);
+            }
+            assert_eq!(s.fighters[1].health, health, "no special or ground-slam damage");
+        }
+    }
+
+    #[test]
     fn holding_down_in_the_air_plunges_and_splashes_for_half_a_goblins_health() {
         let mut s = GameState::new();
         s.fighters[1].x = s.fighters[0].x + 20 * PX;

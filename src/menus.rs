@@ -158,14 +158,18 @@ pub const PANEL: Vec2 = Vec2::new(372.0, 204.0);
 #[derive(Component)]
 pub struct FillView;
 
-/// The title tint, anchored to the bottom edge of the visible view.
-#[derive(Component)]
-struct TitleBottomShade;
-
 const TITLE_SHADE_TOP: f32 = -78.0;
 
-fn visible_menu_size(aspect: f32) -> Vec2 {
-    let base = Vec2::new(crate::VIEW_W, crate::VIEW_H);
+fn menu_base_size(state: &AppState) -> Vec2 {
+    match state {
+        AppState::Campaign => crate::campaign_map::VIEW_SIZE,
+        // Include the entire 384 x 224 map and its surrounding frame.
+        AppState::Title => Vec2::new(416.0, 256.0),
+        _ => Vec2::new(crate::VIEW_W, crate::VIEW_H),
+    }
+}
+
+fn visible_menu_size(aspect: f32, base: Vec2) -> Vec2 {
     if aspect >= base.x / base.y {
         Vec2::new(base.y * aspect, base.y)
     } else {
@@ -175,27 +179,17 @@ fn visible_menu_size(aspect: f32) -> Vec2 {
 
 fn fit_menu_art(
     window: Single<&Window, With<PrimaryWindow>>,
-    mut backgrounds: Query<&mut Sprite, (With<FillView>, Without<TitleBottomShade>)>,
-    mut shades: Query<(&mut Sprite, &mut Transform), (With<TitleBottomShade>, Without<FillView>)>,
+    state: Res<State<AppState>>,
+    mut backgrounds: Query<&mut Sprite, With<FillView>>,
 ) {
     if window.height() <= 0.0 || window.width() <= 0.0 {
         return;
     }
-    let view = visible_menu_size(window.width() / window.height());
+    let aspect = window.width() / window.height();
+    let view = if *state.get() == AppState::Campaign { crate::campaign_map::view_size(aspect) } else { visible_menu_size(aspect, menu_base_size(state.get())) };
     for mut sprite in &mut backgrounds {
         if sprite.custom_size != Some(view) {
             sprite.custom_size = Some(view);
-        }
-    }
-    let bottom = -view.y / 2.0;
-    let shade_size = Vec2::new(view.x, TITLE_SHADE_TOP - bottom);
-    for (mut sprite, mut transform) in &mut shades {
-        if sprite.custom_size != Some(shade_size) {
-            sprite.custom_size = Some(shade_size);
-        }
-        let y = (TITLE_SHADE_TOP + bottom) / 2.0;
-        if transform.translation.y != y {
-            transform.translation.y = y;
         }
     }
 }
@@ -345,17 +339,21 @@ fn spawn_menu(commands: &mut Commands, menu: &mut Menu, state: AppState, title: 
 struct TitleLogo;
 
 /// Start screen: the map behind, the logo over it, the menu below.
-fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res<AssetServer>, page: Res<TitlePage>) {
+fn spawn_title(mut commands: Commands, mut menu: ResMut<Menu>, asset_server: Res<AssetServer>, mut images: ResMut<Assets<Image>>, page: Res<TitlePage>, maps: Res<crate::campaign_map::Maps>, saved: Res<crate::campaign_map::Saved>) {
     let state = AppState::Title;
+    let map = &maps.0.maps[saved.0.last_campaign(&maps.0)];
+    crate::campaign_map::spawn_surround(&mut commands, state.clone(), &mut images, map.theme);
+    for (sprite, at) in crate::campaign_map::frame_parts(map.theme) {
+        commands.spawn((DespawnOnExit(state.clone()), sprite, Transform::from_translation(at)));
+    }
     commands.spawn((
         DespawnOnExit(state.clone()),
-        FillView,
-        Sprite { image: crate::campaign_map::smooth(&asset_server, "ui/campaign/the_city.png".into()), custom_size: Some(Vec2::new(384.0, 216.0)), ..default() },
-        Transform::from_xyz(0.0, 0.0, -8.0),
+        Sprite { image: crate::campaign_map::map_image(&asset_server, map.image.clone()), custom_size: Some(Vec2::new(384.0, 224.0)), ..default() },
+        Transform::from_xyz(0.0, 0.0, -5.0),
     ));
-    // Keep the menu readable and extend its dark band to the bottom of any window shape.
+    // Readability tints stay inside the map, leaving its frame and surround visible.
     commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.78), Vec2::new(150.0, 52.0)), Transform::from_xyz(0.0, -24.0, 1.0)));
-    commands.spawn((DespawnOnExit(state.clone()), TitleBottomShade, Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.82), Vec2::new(384.0, 94.0)), Transform::from_xyz(0.0, -61.0, 1.0)));
+    commands.spawn((DespawnOnExit(state.clone()), Sprite::from_color(Color::srgba(0.03, 0.02, 0.08, 0.82), Vec2::new(384.0, TITLE_SHADE_TOP + 112.0)), Transform::from_xyz(0.0, (TITLE_SHADE_TOP - 112.0) / 2.0, 1.0)));
     commands.spawn((
         DespawnOnExit(state.clone()),
         TitleLogo,
@@ -437,6 +435,7 @@ fn spawn_char_select(
     let footer = spawn_text(&mut commands, state.clone(), "A/D or Left/Right: turn    Enter: pick    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -99.0);
     commands.entity(footer).insert(Anchor::BOTTOM_CENTER);
     for (index, c) in roster.0.iter().enumerate() {
+        if c.campaign_only { continue; }
         // portraits/<sprite folder>.png, if it exists
         let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
         let has_picture = crate::assets_dir().join(format!("portraits/{folder}.png")).exists();
@@ -489,7 +488,7 @@ fn carousel_nav(keys: Res<crate::MenuInput>, mut menu: ResMut<Menu>, roster: Res
         menu.cursor = host;
         ui.write(UiSound::Move);
     } else if turn != 0 {
-        let shown: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].secret_behind.is_none()).collect();
+        let shown: Vec<usize> = (0..roster.len()).filter(|&i| !roster[i].campaign_only && roster[i].secret_behind.is_none()).collect();
         if let Some(at) = shown.iter().position(|&i| i == host) {
             menu.cursor = shown[(at as i32 + turn).rem_euclid(shown.len() as i32) as usize];
             ui.write(UiSound::Move);
@@ -508,7 +507,7 @@ fn carousel_slide(time: Res<Time>, menu: Res<Menu>, roster: Res<Roster>, mut slo
     let ease = 1.0 - (-18.0 * time.delta_secs()).exp();
     let roster = &roster.0;
     // the secrets aren't in the ring: they take the place of the fighter they hide behind while picked
-    let ring: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].secret_behind.is_none()).collect();
+    let ring: Vec<usize> = (0..roster.len()).filter(|&i| !roster[i].campaign_only && roster[i].secret_behind.is_none()).collect();
     let place = |i: usize| ring.iter().position(|&r| r == host_of(roster, i)).unwrap_or(0);
     for (Slot(index), mut tf, mut visibility) in &mut slots {
         let secret = roster[*index].secret_behind.is_some();
@@ -1236,16 +1235,20 @@ fn adopt_overlay(
 /// Menus are drawn around the origin at the normal zoom: the fight camera zooms and moves to follow the
 /// fighters, and leaving a fight at any zoom would otherwise leave the menu drawn at that scale and in the
 /// wrong place, no longer filling the window.
-fn menu_camera(mut cam: Single<(&mut Transform, &mut Projection), With<Camera2d>>) {
+fn menu_camera(state: Res<State<AppState>>, mut cam: Single<(&mut Transform, &mut Projection), With<Camera2d>>) {
     // only written when it is off (every write makes Bevy treat the camera as changed)
     if cam.0.translation.x != 0.0 || cam.0.translation.y != 0.0 {
         cam.0.translation.x = 0.0;
         cam.0.translation.y = 0.0;
     }
+    let size = menu_base_size(state.get());
+    let mode = bevy::camera::ScalingMode::AutoMin { min_width: size.x, min_height: size.y };
     if let Projection::Orthographic(ortho) = &*cam.1 {
-        if ortho.scale != 1.0 {
+        let fitted = matches!(&ortho.scaling_mode, bevy::camera::ScalingMode::AutoMin { min_width, min_height } if *min_width == size.x && *min_height == size.y);
+        if ortho.scale != 1.0 || !fitted {
             if let Projection::Orthographic(ortho) = &mut *cam.1 {
                 ortho.scale = 1.0;
+                ortho.scaling_mode = mode;
             }
         }
     }
@@ -1254,6 +1257,19 @@ fn menu_camera(mut cam: Single<(&mut Transform, &mut Projection), With<Camera2d>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_map_frame_fits_all_screen_shapes_without_stretching_the_map() {
+        for aspect in [9.0 / 16.0, 4.0 / 3.0, 16.0 / 9.0, 32.0 / 9.0] {
+            let view = visible_menu_size(aspect, menu_base_size(&AppState::Title));
+            for (sprite, at) in crate::campaign_map::frame_parts(t2f::campaign::MapTheme::Istanbul).into_iter().chain(crate::campaign_map::frame_parts(t2f::campaign::MapTheme::ForeignLands)).chain(crate::campaign_map::frame_parts(t2f::campaign::MapTheme::SnowForests)) {
+                let half = sprite.custom_size.unwrap() / 2.0;
+                assert!(at.x.abs() + half.x <= view.x / 2.0);
+                assert!(at.y.abs() + half.y <= view.y / 2.0);
+            }
+        }
+        assert_eq!(menu_base_size(&AppState::CharSelect), Vec2::new(crate::VIEW_W, crate::VIEW_H));
+    }
 
     #[test]
     fn menu_confirmation_and_back_use_enter_and_escape() {
@@ -1282,6 +1298,28 @@ mod tests {
             let mut keys = ButtonInput::default();
             keys.press(key);
             assert_eq!(left_right(&keys), expected);
+        }
+    }
+
+    #[test]
+    fn character_carousel_skips_campaign_only_opponents() {
+        let mut roster = crate::load_dir("characters", t2f::sim::CharacterData::from_ron);
+        roster.sort_by_key(|c| (c.campaign_only, c.menu_last));
+        let count = roster.len();
+        let mut app = App::new();
+        app.insert_resource(Roster(roster))
+            .insert_resource(Menu { cursor: 0, len: count, per_page: 1 })
+            .init_resource::<crate::MenuInput>()
+            .add_message::<UiSound>()
+            .add_systems(Update, carousel_nav);
+        for direction in [KeyCode::ArrowRight, KeyCode::ArrowLeft] {
+            for _ in 0..count * 2 {
+                app.world_mut().resource_mut::<crate::MenuInput>().0.reset_all();
+                app.world_mut().resource_mut::<crate::MenuInput>().0.press(direction);
+                app.update();
+                let index = app.world().resource::<Menu>().cursor;
+                assert!(!app.world().resource::<Roster>().0[index].campaign_only);
+            }
         }
     }
 

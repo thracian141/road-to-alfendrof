@@ -877,7 +877,7 @@ impl Fighter {
             // jumping: air attacks keep the jump's momentum
             FighterState::Jump => {
                 // down in the air plunges to the floor; the splash comes on landing
-                if input.has(Input::DOWN) && self.y > Self::SLAM_MIN_HEIGHT {
+                if !data.campaign_only && input.has(Input::DOWN) && self.y > Self::SLAM_MIN_HEIGHT {
                     self.slamming = true;
                     self.vx = 0;
                 }
