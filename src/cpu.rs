@@ -58,21 +58,26 @@ pub fn style_of(data: &CharacterData) -> Style {
     }
 }
 
-/// A CPU charging a pounce (the Goblin King's heavy) keeps the button down for a while, longer the further off the enemy
-/// is (and a bit longer or shorter at random), then lets go. `None` when it isn't charging one.
+/// A CPU charging a move (the Goblin King's pounce, the Baroness's spray) keeps the button down for a while, longer the
+/// further off the enemy is (and a bit longer or shorter at random), then lets go. `None` when it isn't charging one.
 pub fn pounce_charge(state: &GameState, me: usize, data: &CharacterData) -> Option<Input> {
     let m = &state.fighters[me];
     if m.state != FighterState::Attack {
         return None;
     }
     let mv = &data.moves[m.attack.min(data.moves.len() - 1)];
-    if mv.latch.is_none() || mv.charge_frames == 0 || m.state_frame >= mv.startup || m.latch_left > 0 {
+    if mv.charge_frames == 0 || m.state_frame >= mv.startup || m.latch_left > 0 {
         return None;
     }
     let dist = ((state.fighters[state.targets[me]].x - m.x).abs() / PX) as u32;
     let jitter = (state.frame.wrapping_sub(m.charge) / 7).wrapping_mul(2_654_435_761) % 23;
     let want = (14 + dist / 4 + jitter).min(mv.charge_frames);
-    Some(Input(if m.charge < want { Input::HEAVY } else { 0 }))
+    let flag = match mv.button {
+        Button::Light => Input::LIGHT,
+        Button::Heavy => Input::HEAVY,
+        Button::Special => Input::SPECIAL,
+    };
+    Some(Input(if m.charge < want { flag } else { 0 }))
 }
 
 /// The CPU's input for fighter `me` (playing `data`) against someone playing `opp`: it plays ranged and close-range
@@ -575,7 +580,7 @@ mod tests {
         let mut s = GameState::new();
         s.fighters[0].x = -150 * PX;
         s.fighters[1].x = 50 * PX;
-        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0 });
+        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0, spent: false });
         let mut defended = 0;
         for window in 0..60 {
             s.frame = window * 8;
@@ -600,7 +605,7 @@ mod tests {
         let mut s = GameState::new();
         s.fighters[0].x = -150 * PX;
         s.fighters[1].x = 50 * PX;
-        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0 });
+        s.projectiles.push(crate::sim::Projectile { owner: 0, x: 0, y: 44 * PX, vx: 6 * PX, vy: 0, age: 0, move_index: 0, land_x: 0, power: 100, spell: 0, spent: false });
         let slams = (0..40u32).filter(|w| {
             s.frame = w * 8;
             cpu_input_vs(&s, 1, &anaran, &gunslinger).has(Input::HEAVY)

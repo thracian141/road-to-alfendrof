@@ -71,11 +71,6 @@ impl CampaignData {
 }
 
 impl MapData {
-    /// Every level has two preliminary fights; the last playable level has three.
-    pub fn preliminary_count(&self, level: usize) -> usize {
-        if level + 1 == self.levels.len() { 3 } else { 2 }
-    }
-
     /// The name a level is saved under.
     pub fn level_id(&self, level: usize) -> String {
         format!("{}/{}", self.id, level + 1)

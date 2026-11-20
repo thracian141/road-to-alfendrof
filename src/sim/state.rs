@@ -32,6 +32,8 @@ pub struct Projectile {
     pub power: i32,
     /// The form of the move's spell it is (0: the move's own; see `SpellData`).
     pub spell: u8,
+    /// A piercing shot that has already hit: it keeps going but hits nothing more.
+    pub spent: bool,
 }
 
 impl Minion {
@@ -1196,6 +1198,8 @@ impl GameState {
     /// Launch the next shot of any attack whose startup is over. A volley fires `volley_gap` frames apart;
     /// the special spends the meter with its first shot.
     fn launch_projectiles(&mut self, chars: &[&CharacterData]) {
+        // a spray with no gap between its shots fires them all in the same frame
+        let mut again = false;
         for owner in 0..self.fighters.len() {
             if self.fighters[owner].state != FighterState::Attack {
                 self.fighters[owner].lob_target = None;
@@ -1223,7 +1227,8 @@ impl GameState {
             if mv.channel.is_some() {
                 continue; // fired by fire_channels
             }
-            let total = mv.volley.max(1);
+            // a charged volley fires a tap's worth of shots, and one more for each step of the charge
+            let total = if mv.volley_per_charge > 0 && mv.charge_frames > 0 { (mv.volley_tap.max(1) + f.charge / mv.volley_per_charge).min(mv.volley.max(1)) } else { mv.volley.max(1) };
             if f.shots >= total || f.state_frame <= mv.startup + mv.volley_delay + f.shots * mv.volley_gap {
                 continue;
             }
@@ -1258,7 +1263,17 @@ impl GameState {
             // straight shots fly ahead at a fixed speed; their lifetime limits the range
             if !p.aimed && !p.lob {
                 vx = if p.speed_tenths > 0 { f.facing * p.speed_tenths * PX / 10 } else { f.facing * if p.speed > 0 { p.speed } else { 5 } * PX };
-                vy = if p.fan > 0 { ((f.shots as i32 * 37 + 11) % (2 * p.fan + 1) - p.fan) * PX / 10 } else { 0 };
+                vy = if p.fan > 0 && mv.volley_per_charge > 0 {
+                    // a spray: the first shot straight, the rest scattered within the fan and a little faster or slower
+                    // each, so they leave as a cloud (the same pattern every time)
+                    let k = f.shots as i32;
+                    vx = vx * (100 + (k * 53 + 7) % 31 - 15) / 100;
+                    if k == 0 { 0 } else { ((k * 37 + 11) % (2 * p.fan + 1) - p.fan) * PX / 10 }
+                } else if p.fan > 0 {
+                    ((f.shots as i32 * 37 + 11) % (2 * p.fan + 1) - p.fan) * PX / 10
+                } else {
+                    0
+                };
             }
             // a coin is thrown up in an arc to land on alternate sides of the target, further out each pair
             if p.coin {
@@ -1272,13 +1287,17 @@ impl GameState {
             }
             let power = if f.finisher { 150 } else { 100 };
             let spell = if mv.spells.is_empty() { 0 } else { f.spell };
-            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x, power, spell });
+            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x, power, spell, spent: false });
+            again |= mv.volley_per_charge > 0 && mv.volley_gap == 0;
             let f = &mut self.fighters[owner];
             f.shots += 1;
             f.launched = true;
             if mv.button == super::data::Button::Special {
                 f.meter = 0;
             }
+        }
+        if again {
+            self.launch_projectiles(chars);
         }
     }
 
@@ -1373,7 +1392,7 @@ impl GameState {
             let (vx, vy) = if p.homing { Self::missile_launch_velocity(p, f.facing) } else { (f.facing * Self::missile_speed(p), 0) };
             let move_index = f.attack;
             let spell = if mv.spells.is_empty() { 0 } else { f.spell };
-            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x: 0, power: 100, spell });
+            self.projectiles.push(Projectile { owner, x, y, vx, vy, age: 0, move_index, land_x: 0, power: 100, spell, spent: false });
             self.fighters[owner].shots += 1;
             self.fighters[owner].launched = true;
         }
@@ -1665,7 +1684,9 @@ impl GameState {
                 let foe = &self.fighters[self.targets[owner]];
                 let (dx, dy) = ((foe.x - p.x) as i64, (foe.y + 30 * PX - p.y) as i64);
                 let dist = (Self::isqrt((dx * dx + dy * dy) as u64) as i64).max(1);
-                let speed = Self::missile_speed(data) as i64;
+                // (a steering shot keeps its own speed: the shots of a spray each fly a little faster or slower)
+                let own = Self::isqrt((p.vx as i64 * p.vx as i64 + p.vy as i64 * p.vy as i64) as u64) as i64;
+                let speed = if data.homing || own == 0 { Self::missile_speed(data) as i64 } else { own };
                 let turn = data.homing_turn.clamp(1, 100) as i64;
                 p.vx += ((dx * speed / dist - p.vx as i64) * turn / 100) as i32;
                 p.vy += ((dy * speed / dist - p.vy as i64) * turn / 100) as i32;
@@ -1716,7 +1737,7 @@ impl GameState {
                 continue;
             }
             let (hw, hh) = (data.size.0 * PX / 2, data.size.1 * PX / 2);
-            let hit = close || (p.x - hw < hurt[2] && hurt[0] < p.x + hw && p.y - hh < hurt[3] && hurt[1] < p.y + hh);
+            let hit = !p.spent && (close || (p.x - hw < hurt[2] && hurt[0] < p.x + hw && p.y - hh < hurt[3] && hurt[1] < p.y + hh));
             let floor = data.aim_ground && p.y <= 0;
             let gone = floor || p.age >= data.lifetime || p.x.abs() > self.stage_half_width + 80 * PX || p.y < -10 * PX;
 
@@ -1768,8 +1789,16 @@ impl GameState {
                     // a shot counts as a hit from its owner's side for the opponent's curse
                     self.mark_curse(owner);
                 }
+                // a knight's charge rides on through
+                if data.pierce && !gone {
+                    p.spent = true;
+                    self.projectiles.push(p);
+                }
             } else if self.hit_minion(defender, [p.x - hw, p.y - hh, p.x + hw, p.y + hh], mv.shot_damage.unwrap_or(mv.damage) * p.power / 100, mv.button == super::data::Button::Light) {
-                // the shot is spent on the goblin
+                // the shot is spent on the goblin (a knight tramples it and rides on)
+                if data.pierce && !gone {
+                    self.projectiles.push(p);
+                }
             } else if !gone {
                 self.projectiles.push(p);
             } else if floor {
@@ -2033,6 +2062,121 @@ mod tests {
 
     fn goblin_king() -> CharacterData {
         CharacterData::from_ron(&std::fs::read_to_string("assets/characters/goblin_king.ron").unwrap()).unwrap()
+    }
+
+    fn baroness() -> CharacterData {
+        CharacterData::from_ron(&std::fs::read_to_string("assets/characters/baroness.ron").unwrap()).unwrap()
+    }
+
+    /// The Baroness holds Light for `hold` frames and lets go, the enemy far off; returns the most bolts in the air at once.
+    fn spray(hold: u32) -> (GameState, usize) {
+        let (b, e) = (baroness(), ayz());
+        let mut s = GameState::new();
+        s.fighters[0].x = -150 * PX;
+        s.fighters[1].x = 150 * PX;
+        s.step([Input(Input::LIGHT), Input(0)], [&b, &e]);
+        for _ in 0..hold {
+            s.step([Input(Input::LIGHT), Input(0)], [&b, &e]);
+        }
+        let mut most = 0;
+        for _ in 0..30 {
+            s.step([Input(0), Input(0)], [&b, &e]);
+            most = most.max(s.projectiles.iter().filter(|p| p.owner == 0).count());
+        }
+        (s, most)
+    }
+
+    #[test]
+    fn a_tapped_spray_is_a_quick_three_and_a_charged_one_is_many_that_fan_out_and_steer_in() {
+        let (_, tapped) = spray(0);
+        assert_eq!(tapped, 3);
+        let (_, half) = spray(30);
+        let (s, full) = spray(70);
+        assert!(3 < half && half < full, "{half} then {full}");
+        assert_eq!(full, 13);
+        // the bolts are small and weak one by one, and steer a little like the Scribe's quills
+        let b = baroness();
+        let light = &b.moves[b.find_move(Button::Light, false, false).unwrap()];
+        let p = light.projectile.as_ref().unwrap();
+        assert!(p.size.0 <= 4 && light.damage <= 6 && p.steer && p.homing_turn >= 10 && light.charge_frames > 0);
+        let _ = s;
+    }
+
+    #[test]
+    fn the_baroness_spins_up_close_and_blasts_from_afar() {
+        let b = baroness();
+        let heavy = b.find_move(Button::Heavy, false, false).unwrap();
+        assert_eq!(b.moves[b.ranged_variant(heavy, 40)].name, "Scepter Spin");
+        assert_eq!(b.moves[b.ranged_variant(heavy, 150)].name, "Arcane Beam");
+    }
+
+    #[test]
+    fn the_baroness_beam_reaches_a_long_way_once_and_cannot_be_spammed() {
+        let (b, e) = (baroness(), ayz());
+        let beam = b.moves.iter().position(|m| m.name == "Arcane Beam").unwrap();
+        assert!(b.moves[beam].ray && b.moves[beam].projectile.is_none() && b.moves[beam].hitbox.w >= 300);
+        assert!(b.moves[beam].cooldown >= 240 && b.moves[beam].startup <= 16 && b.moves[beam].hitbox.h >= 24, "quick to start, wide, and slow to come back");
+        let mut s = GameState::new();
+        s.fighters[0].x = -200 * PX;
+        s.fighters[1].x = 130 * PX;
+        let health = s.fighters[1].health;
+        s.step([Input(Input::HEAVY), Input(0)], [&b, &e]);
+        let mut hits = 0;
+        let mut last = s.fighters[1].health;
+        for _ in 0..80 {
+            s.step([Input(0), Input(0)], [&b, &e]);
+            if s.fighters[1].health < last {
+                hits += 1;
+            }
+            last = s.fighters[1].health;
+        }
+        assert_eq!(hits, 1, "a beam hits once");
+        assert!(health - s.fighters[1].health >= b.moves[beam].damage / 2, "and it hurts, from {} px away", 330);
+        // pressing Heavy again at once does nothing
+        s.fighters[1].health = health;
+        s.step([Input(Input::HEAVY), Input(0)], [&b, &e]);
+        for _ in 0..80 {
+            s.step([Input(0), Input(0)], [&b, &e]);
+        }
+        assert_eq!(s.fighters[1].health, health, "still reloading");
+    }
+
+    #[test]
+    fn the_knight_rides_out_from_behind_her_and_through_the_enemy_hitting_once() {
+        let (b, e) = (baroness(), ayz());
+        let mut s = GameState::new();
+        s.fighters[0].x = -100 * PX;
+        s.fighters[1].x = 60 * PX;
+        s.fighters[0].meter = Fighter::METER_MAX;
+        s.step([Input(Input::SPECIAL), Input(0)], [&b, &e]);
+        let mut first_x = None;
+        let health = s.fighters[1].health;
+        let mut hit_at = None;
+        for k in 0..120 {
+            s.step([Input(0), Input(0)], [&b, &e]);
+            if let Some(p) = s.projectiles.iter().find(|p| p.owner == 0) {
+                first_x.get_or_insert(p.x);
+            }
+            if hit_at.is_none() && s.fighters[1].health < health {
+                hit_at = Some(k);
+            }
+        }
+        assert!(first_x.unwrap() < -100 * PX, "it comes from behind her");
+        assert!(hit_at.is_some(), "the lance hits");
+        let special = b.moves.iter().find(|m| m.button == Button::Special).unwrap();
+        assert_eq!(health - s.fighters[1].health, special.damage, "once");
+        // and the knight was still riding after the hit
+        let mut s2 = GameState::new();
+        s2.fighters[0].x = -100 * PX;
+        s2.fighters[1].x = 0;
+        s2.fighters[0].meter = Fighter::METER_MAX;
+        s2.step([Input(Input::SPECIAL), Input(0)], [&b, &e]);
+        let mut rode_on = false;
+        for _ in 0..80 {
+            s2.step([Input(0), Input(0)], [&b, &e]);
+            rode_on |= s2.projectiles.iter().any(|p| p.owner == 0 && p.spent && p.x > 0);
+        }
+        assert!(rode_on);
     }
 
     #[test]
@@ -2922,38 +3066,6 @@ mod tests {
     }
 
     #[test]
-    fn unnamed_campaign_fighters_only_damage_with_punches_and_kicks() {
-        for index in 1..=8 {
-            let path = format!("assets/characters/generic_{index:02}.ron");
-            let data = CharacterData::from_ron(&std::fs::read_to_string(path).unwrap()).unwrap();
-            assert!(data.campaign_only && data.name.is_empty());
-            assert_eq!(data.moves.len(), 6);
-            assert!(data.moves.iter().all(|m| m.button != Button::Special && m.projectile.is_none() && m.minions.is_none()));
-            for button in [Input::LIGHT, Input::HEAVY] {
-                let mut s = GameState::new();
-                s.fighters[1].x = s.fighters[0].x + 30 * PX;
-                let health = s.fighters[1].health;
-                s.step([Input(button), Input(0)], [&data, &data]);
-                for _ in 0..40 { s.step([Input(0), Input(0)], [&data, &data]); }
-                assert!(s.fighters[1].health < health, "{index}: punch/kick must connect");
-            }
-            let mut s = GameState::new();
-            s.fighters[1].x = s.fighters[0].x + 20 * PX;
-            let health = s.fighters[1].health;
-            s.fighters[0].meter = Fighter::METER_MAX;
-            s.step([Input(Input::SPECIAL), Input(0)], [&data, &data]);
-            assert_ne!(s.fighters[0].state, FighterState::Attack);
-            s.step([Input(Input::UP), Input(0)], [&data, &data]);
-            for _ in 0..6 { s.step([Input(0), Input(0)], [&data, &data]); }
-            for _ in 0..90 {
-                s.step([Input(Input::DOWN), Input(0)], [&data, &data]);
-                assert!(!s.fighters[0].slamming);
-            }
-            assert_eq!(s.fighters[1].health, health, "no special or ground-slam damage");
-        }
-    }
-
-    #[test]
     fn holding_down_in_the_air_plunges_and_splashes_for_half_a_goblins_health() {
         let mut s = GameState::new();
         s.fighters[1].x = s.fighters[0].x + 20 * PX;
@@ -3356,7 +3468,7 @@ mod tests {
     #[test]
     fn a_star_that_hits_nothing_fizzles_out() {
         let mut s = GameState::new();
-        s.projectiles.push(Projectile { owner: 0, x: 0, y: 100 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0 });
+        s.projectiles.push(Projectile { owner: 0, x: 0, y: 100 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0, spent: false });
         // Park the opponent far away so the star never reaches them.
         for _ in 0..100 {
             step(&mut s, 0, 0);
@@ -3368,7 +3480,7 @@ mod tests {
     #[test]
     fn the_star_is_cleared_between_rounds() {
         let mut s = summon_vs(0, 80 * PX);
-        s.projectiles.push(Projectile { owner: 0, x: 0, y: 50 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0 });
+        s.projectiles.push(Projectile { owner: 0, x: 0, y: 50 * PX, vx: 0, vy: 0, age: 0, move_index: 6, land_x: 0, power: 100, spell: 0, spent: false });
         s.fighters[1].health = 1;
         s.phase = Phase::RoundEnd(GameState::ROUND_END_FRAMES - 1);
         step(&mut s, 0, 0);

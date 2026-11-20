@@ -25,7 +25,7 @@ pub struct CrescentOf(pub usize);
 /// One of up to `STAR_SLOTS` projectile sprites per fighter (a volley has several in flight).
 #[derive(Component)]
 pub struct StarOf(pub usize, pub usize);
-pub const STAR_SLOTS: usize = 4;
+pub const STAR_SLOTS: usize = 12;
 /// Overlay for the special meter (the glowing mark or the hat).
 #[derive(Component)]
 pub struct MarkOf(pub usize);
@@ -67,6 +67,18 @@ pub struct BubbleTail(pub usize, pub bool);
 pub struct JesusOf(pub usize);
 #[derive(Component)]
 pub struct BeamPart(pub usize, pub bool);
+/// The pieces of a fighter's ray of energy (a move with `ray`): a wide soft glow, a white core, and segments of a column
+/// that shades from blue at the scepter to indigo far away.
+#[derive(Component)]
+pub struct RayPart(pub usize, pub RayKind);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RayKind {
+    Glow,
+    Core,
+    Segment(usize),
+}
+/// How many segments a ray's column is cut into (the colour changes from one to the next).
+pub const RAY_SEGMENTS: usize = 10;
 /// The blue bubble of plot armour round a fighter, and its label.
 #[derive(Component)]
 pub struct ShieldOf(pub usize);
@@ -284,6 +296,16 @@ pub fn spawn_fighter(
                     Visibility::Hidden,
                 ));
             }
+        }
+        // a ray of energy (the Baroness's beam), a few flat pieces shown only while one is being fired
+        for kind in std::iter::once(RayKind::Glow).chain(std::iter::once(RayKind::Core)).chain((0..RAY_SEGMENTS).map(RayKind::Segment)) {
+            commands.spawn((
+                RayPart(fighter, kind),
+                DespawnOnExit(AppState::Fight),
+                Sprite::from_color(Color::WHITE, Vec2::new(10.0, 10.0)),
+                Transform::from_xyz(0.0, 0.0, 6.0),
+                Visibility::Hidden,
+            ));
         }
         if let Some(p) = summon.filter(|p| p.summon_name() != "none" && !p.lob) {
             let crescent = commands
@@ -1450,6 +1472,63 @@ pub fn animate_scribe_effects(
         // bottom sweeps
         tf.rotation = Quat::from_rotation_z(dx.atan2(-dy));
         sprite.color = if *core { Color::srgba(1.0, 1.0, 0.95, fade) } else { Color::srgba(1.0, 0.88, 0.45, 0.55 * fade) };
+    }
+}
+
+/// The beam of a `ray` move: from her scepter out along the move's hitbox, blue shading to indigo, flaring as it fires
+/// and thinning away afterwards. It is drawn while the move is active (and a few frames after), even once it has hit.
+pub fn animate_rays(
+    sim: Res<Sim>,
+    roster: Res<Roster>,
+    sel: Res<Selection>,
+    time: Res<Time>,
+    mut parts: Query<(&RayPart, &mut Sprite, &mut Transform, &mut Visibility)>,
+) {
+    for (RayPart(i, kind), mut sprite, mut tf, mut visibility) in &mut parts {
+        let Some(f) = sim.0.fighters.get(*i) else { continue };
+        let data = &roster.0[sel.chars[*i]];
+        let mv = &data.moves[f.attack.min(data.moves.len() - 1)];
+        let tail = 8;
+        let on = mv.ray && f.state == FighterState::Attack && f.state_frame > mv.startup && f.state_frame <= mv.startup + mv.active + tail;
+        if !on {
+            set_ne!(*visibility, Visibility::Hidden);
+            continue;
+        }
+        set_ne!(*visibility, Visibility::Inherited);
+        let into = f.state_frame - mv.startup;
+        // it flares open in two frames, holds, and thins out after the last active frame
+        let open = (into as f32 / 2.0).min(1.0);
+        let fade = if f.state_frame > mv.startup + mv.active { 1.0 - (f.state_frame - mv.startup - mv.active) as f32 / tail as f32 } else { 1.0 };
+        let pulse = 1.0 + 0.12 * (time.elapsed_secs() * 45.0).sin();
+        let thick = mv.hitbox.h as f32 * open * fade.max(0.0) * pulse;
+        let face = f.facing as f32;
+        let (start, length) = ((f.x / PX) as f32 + face * mv.hitbox.x as f32, mv.hitbox.w as f32);
+        let y = GROUND_Y + (f.y / PX) as f32 + mv.hitbox.y as f32 + mv.hitbox.h as f32 / 2.0;
+        let blue = (0.35_f32, 0.62, 1.0);
+        let indigo = (0.30_f32, 0.15, 0.78);
+        match kind {
+            RayKind::Segment(k) => {
+                let (a, b) = (*k as f32 / RAY_SEGMENTS as f32, (*k + 1) as f32 / RAY_SEGMENTS as f32);
+                let t = (a + b) / 2.0;
+                let colour = (blue.0 + (indigo.0 - blue.0) * t, blue.1 + (indigo.1 - blue.1) * t, blue.2 + (indigo.2 - blue.2) * t);
+                sprite.custom_size = Some(Vec2::new(length / RAY_SEGMENTS as f32 + 0.5, thick * 0.8));
+                set_ne!(tf.translation.x, start + face * length * t);
+                set_ne!(tf.translation.y, y);
+                sprite.color = Color::srgba(colour.0, colour.1, colour.2, 0.92 * fade);
+            }
+            RayKind::Core => {
+                sprite.custom_size = Some(Vec2::new(length, thick * 0.32));
+                set_ne!(tf.translation.x, start + face * length / 2.0);
+                set_ne!(tf.translation.y, y);
+                sprite.color = Color::srgba(0.92, 0.96, 1.0, fade);
+            }
+            RayKind::Glow => {
+                sprite.custom_size = Some(Vec2::new(length, thick * 1.7));
+                set_ne!(tf.translation.x, start + face * length / 2.0);
+                set_ne!(tf.translation.y, y);
+                sprite.color = Color::srgba(0.4, 0.5, 1.0, 0.28 * fade);
+            }
+        }
     }
 }
 

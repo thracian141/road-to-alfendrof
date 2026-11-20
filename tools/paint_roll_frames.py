@@ -11,11 +11,12 @@ import math, json, zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'tools/previews/animation_review/roll_drawings'
-OUT.mkdir(exist_ok=True)
+OUT.mkdir(parents=True, exist_ok=True)
 
 # Head rectangle, jacket, shadow, highlight, trousers, trouser shadow, skin,
 # skin shadow, shoe and sole. All swatches belong to the original idle palette.
 DESIGNS = {
+ 'baroness': ((25,8,42,29),(155,69,57),(131,55,45),(167,85,74),(155,69,57),(139,58,47),(215,190,168),(188,158,133),(109,87,80),(72,53,49)),
  'anaran': ((23,8,43,28),(179,61,61),(145,49,50),(196,77,75),(179,61,61),(112,28,36),(251,205,174),(229,174,137),(235,168,83),(187,133,64)),
  'ayz': ((25,6,43,25),(240,241,250),(186,192,216),(250,250,255),(246,142,32),(196,98,26),(238,196,158),(222,174,134),(162,162,162),(234,234,234)),
  'evilayz': ((25,8,43,27),(15,14,5),(69,63,39),(5,5,0),(9,113,223),(59,157,229),(17,59,97),(33,81,121),(93,93,93),(21,21,21)),
@@ -86,6 +87,11 @@ def arm(im, points, c, near=True):
         d.line([a,b],fill=rgba(jacket),width=5)
     d.line([(b[0],b[1]+2),(w[0],w[1]+1)],fill=rgba(skin_dark if short_sleeve else dark),width=1)
     d.line([(a[0],a[1]-1),(b[0],b[1]-1)],fill=rgba(light if not short_sleeve else skin),width=1)
+    if c == DESIGNS['baroness']:
+        # Her pale-blue lower sleeves fold with the elbows; the upper sleeves
+        # stay red. Leave the small skin hand visible at the wrist.
+        d.line([b,w],fill=(185,213,213,255),width=4)
+        d.line([(b[0],b[1]+2),(w[0],w[1]+1)],fill=(136,172,175,255),width=1)
     # Closed hands, except the planted supporting hands (horizontal palm).
     d.polygon([(w[0]-2,w[1]-1),(w[0],w[1]-2),(w[0]+2,w[1]-1),(w[0]+2,w[1]+1),(w[0]-1,w[1]+1)],fill=rgba(skin))
     d.line([(w[0]-1,w[1]+1),(w[0]+2,w[1]+1)],fill=rgba(skin_dark))
@@ -106,6 +112,22 @@ def place_head(im, source, rect, pose):
     if angle:head=head.rotate(angle,resample=Image.Resampling.NEAREST,expand=True)
     im.alpha_composite(head,(round(x-head.width/2),round(y-head.height/2)))
 
+# One continuous skirt silhouette per pose. The fabric bridges the knees,
+# rather than tracing two independently folded trouser legs.
+BARONESS_GOWNS = [
+    [(24,48),(34,47),(44,52),(44,57),(39,60),(28,61),(20,58),(18,54)],
+    [(24,41),(33,44),(37,50),(34,58),(28,60),(22,59),(17,54),(17,49)],
+    [(23,44),(24,36),(30,31),(37,33),(43,40),(45,46),(39,50),(31,48)],
+    [(23,44),(24,35),(29,29),(35,30),(42,34),(46,40),(47,46),(41,49),(33,47)],
+    [(31,39),(40,38),(46,42),(47,49),(42,54),(32,57),(27,52),(29,46)],
+    [(30,46),(41,46),(47,52),(45,59),(39,61),(28,60),(25,56)],
+    [(27,49),(40,49),(47,54),(44,60),(38,62),(24,62),(19,57),(22,53)],
+    [(26,48),(38,48),(44,53),(42,60),(36,62),(25,62),(20,57),(22,52)],
+    [(26,47),(38,47),(44,52),(43,60),(36,62),(23,62),(20,56),(22,51)],
+    [(26,44),(38,45),(42,51),(44,60),(37,62),(22,62),(20,55),(22,49)],
+]
+
+
 def paint(character, i, source, c):
     global short_sleeve
     p=POSES[i]
@@ -115,12 +137,23 @@ def paint(character, i, source, c):
     # Far hand/leg behind the torso, with its palette shade rather than an
     # unrelated dark outline. Near arm overlaps head/torso at a tucked roll.
     arm(im,p['arms'][0],c,False)
-    for k,leg in enumerate(p['legs']):
-        contour(im,leg,pants_dark if k==0 else pants,pants_dark,highlight=None)
+    if character == 'baroness':
+        gown = BARONESS_GOWNS[i]
+        contour(im,gown,pants,pants_dark,light)
         d=ImageDraw.Draw(im)
-        d.line(leg[1:3],fill=rgba(pants),width=1)
-        if k==1:d.point(leg[2],fill=rgba(tuple(min(255,v+12) for v in pants)))
-        foot(im,p['feet'][k],c,2<=i<=4,k)
+        # Short cloth creases stop inside the skirt, never forming a crotch split.
+        a,b=gown[1],gown[4]
+        middle=(round((a[0]+b[0])/2),round((a[1]+b[1])/2))
+        d.line([a,middle],fill=rgba(pants_dark),width=1)
+        for k in range(2):
+            foot(im,p['feet'][k],c,2<=i<=4,k)
+    else:
+        for k,leg in enumerate(p['legs']):
+            contour(im,leg,pants_dark if k==0 else pants,pants_dark,highlight=None)
+            d=ImageDraw.Draw(im)
+            d.line(leg[1:3],fill=rgba(pants),width=1)
+            if k==1:d.point(leg[2],fill=rgba(tuple(min(255,v+12) for v in pants)))
+            foot(im,p['feet'][k],c,2<=i<=4,k)
     if character in ('anaran','gray_persona'):
         # Separate folds behind the round back, attached at the shoulders.
         cape=[(x-3,y) for x,y in p['body']]
@@ -134,7 +167,8 @@ def paint(character, i, source, c):
       'evilayz':(27,29,42,43), 'cowboy':(28,27,39,42),
       'junkhead':(27,27,39,42), 'scribe':(34,27,41,43),
       'gray_persona':(29,29,40,40), 'goblin_king':(28,31,39,44),
-      'haymaker':(28,28,41,41), 'katmata':(27,28,41,42)
+      'haymaker':(28,28,41,41), 'katmata':(27,28,41,42),
+      'baroness':(28,29,41,44)
     }
     patch=source.crop(swatches[character])
     xs=[q[0] for q in p['body']];ys=[q[1] for q in p['body']]
@@ -185,6 +219,11 @@ def paint(character, i, source, c):
         for x,y in p['body'][:3]:d.rectangle((x-1,y,x+1,y+1),fill=(240,237,229,255))
     if character=='anaran':
         d.line(p['body'][2:4],fill=(187,133,64,255),width=1)
+    if character=='baroness':
+        # The gold waist trim follows the folded gown, rather than remaining
+        # horizontal while her body turns over her shoulder.
+        d.line(p['body'][-3:-1],fill=(189,149,33,255),width=2)
+        d.line(p['body'][-3:-1],fill=(236,191,58,255),width=1)
     if character=='katmata' and i in (0,1,6,7,8,9):
         x,y=p['body'][1];d.point((x,y+3),fill=(90,170,111,255))
     # A solid neck beneath the head crop closes gaps created by head tilt.
@@ -198,6 +237,12 @@ def paint(character, i, source, c):
         d=ImageDraw.Draw(im);d.point((a[0]-1,a[1]+2),fill=(196,36,40,255) if character=='junkhead' else (40,45,77,255))
     return im
 
+def baroness_rolls(source):
+    """Native hand-plotted poses, also used by her full sprite generator."""
+    global FOOT_SPRITES
+    FOOT_SPRITES = [source.crop(box) for box in [(20,57,34,63),(39,57,51,63)]]
+    return {f'roll_{i}': paint('baroness', i, source, DESIGNS['baroness']) for i in range(10)}
+
 def main():
     global FOOT_SPRITES
     preview=Image.new('RGBA',(84*10*3,63*(len(DESIGNS)+1)*3),(70,78,91,255))
@@ -207,6 +252,7 @@ def main():
         pad=(40,30) if character=='haymaker' else (0,0)
         if character=='haymaker':source=source.crop((40,30,124,93))
         shoes={
+          'baroness':[(20,57,34,63),(39,57,51,63)],
           'anaran':[(18,54,27,63),(38,54,47,63)],
           'ayz':[(16,55,29,63),(40,55,53,63)],
           'evilayz':[(16,55,29,63),(40,55,53,63)],

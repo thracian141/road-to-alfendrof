@@ -1,0 +1,58 @@
+// The Baroness: long dark hair, a gold circlet, a pale leathery red gown with pale blue sleeves, and a scepter she casts her spells with.
+// Drawings come from `python tools/gen_baroness_sprites.py`.
+// Light: a tap throws a quick group of three tiny blue bolts that steer a little towards the enemy (three taps, then a short
+//        reload, like the Scribe's quills); hold to charge (like the Goblin King's pounce) and let go for a bigger spray, one
+//        more bolt for every bit of charge, up to thirteen, all sprayed out at once (`volley_tap`, `volley_per_charge`).
+// Heavy: up close a spin with the scepter; further off a long beam of blue-to-indigo energy (`ray`), quick to start but slow to
+//        come back.
+// Special: a knight on horseback rides out from behind her and charges at the enemy with his lance (`pierce`: he rides on
+//          through whoever he hits).
+// See ayz.ron for what each field means; volley_per_charge and pierce are in src/sim/data.rs.
+(
+    name: "The Baroness",
+    sprites: Some("baroness"),
+    blurbs: ["Tap for a quick group of three little blue bolts that home in on the enemy; hold to charge for a bigger and bigger spray.", "Up close she spins her scepter round her; further off she fires a long beam of blue-to-indigo energy that takes a while to come back.", "A knight on horseback rides out from behind her and charges at the enemy, lance first."],
+    color: (0.6, 0.26, 0.2),
+    spark_color: Some((0.35, 0.55, 1.0)),
+    keeps_distance: true,
+    walk_speed: 210,
+    jump_speed: 1050,
+    moves: [
+        // a tap throws three, quick as the Scribe's quills (three taps, then a short reload); held at the end of the startup
+        // for up to a second it throws one more for every 6 frames of charge (thirteen at most), all sprayed out in the same
+        // instant: scattered up and down, some faster, some slower, steering back in.
+        (name: "Spellspray", sfx: (cast: Some("dark_cast"), launch: Some("arcane_launch"), hit: Some("arcane_hit")), button: Light, crouching: false, anim: Cast, walk_pct: 0,
+         charge_frames: 60, volley: 13, volley_tap: 3, volley_gap: 0, volley_per_charge: 6, burst_shots: 3, burst_reload: 26,
+         startup: 3, active: 1, recovery: 7, damage: 6, hitstun: 8, blockstun: 4, knockback: 1, hitstop: 1,
+         hitbox: (x: 0, y: 0, w: 0, h: 0),
+         projectile: Some((x: 22, y: 36, aim_y: 30, travel_frames: 1, lifetime: 70, size: (4, 4), image: Some("bolt"), summon_image: Some("none"),
+                           speed_tenths: 50, steer: true, homing_turn: 12, fan: 14))),
+        (name: "Low Scepter", sfx: (cast: Some("staff_swing")), button: Light, crouching: true, anim: Soft, walk_pct: 0,
+         startup: 6, active: 3, recovery: 9, damage: 20, hitstun: 11, blockstun: 6, knockback: 2, hitstop: 3,
+         hitbox: (x: 8, y: 0, w: 30, h: 12)),
+        // in the air: a small spray of five, uncharged (`volley_per_charge` with no charge sprays the whole volley)
+        (name: "Falling Sparks", sfx: (cast: Some("dark_cast"), launch: Some("arcane_launch"), hit: Some("arcane_hit")), button: Light, crouching: false, air: true, anim: Soft, walk_pct: 100,
+         volley: 5, volley_gap: 0, volley_per_charge: 1,
+         startup: 5, active: 2, recovery: 12, damage: 6, hitstun: 8, blockstun: 4, knockback: 1, hitstop: 1,
+         hitbox: (x: 0, y: 0, w: 0, h: 0),
+         projectile: Some((x: 18, y: 30, aim_y: 30, travel_frames: 1, lifetime: 60, size: (4, 4), image: Some("bolt"), summon_image: Some("none"),
+                           speed_tenths: 50, steer: true, homing_turn: 12, fan: 14))),
+        // further off: a beam, a long column of blue energy deepening to indigo along the scepter's line. It is quick to
+        // start and a wide column (crouching or a jump still gets under or over it), and the move is slow to come back, so
+        // it can't be spammed.
+        (name: "Arcane Beam", sfx: (cast: Some("dark_cast"), launch: Some("arcane_launch"), hit: Some("arcane_hit")), button: Heavy, crouching: false, anim: Hard, walk_pct: 0, cooldown: 300, shared_cooldown: true, ray: true,
+         startup: 14, active: 14, recovery: 30, damage: 80, hitstun: 24, blockstun: 12, knockback: 4, hitstop: 6,
+         hitbox: (x: 42, y: 22, w: 340, h: 28)),
+        // up close: the scepter swung all the way round her, hitting twice (on both sides, pushing them away)
+        (name: "Scepter Spin", sfx: (cast: Some("staff_swing"), hit: Some("hit_large")), button: Heavy, crouching: false, anim: Twirl, walk_pct: 0, cooldown: 150, shared_cooldown: true, within: Some(56),
+         hits: 2, hit_gap: 10, radial: true,
+         startup: 9, active: 5, recovery: 16, damage: 34, hitstun: 16, blockstun: 10, knockback: 3, hitstop: 5,
+         hitbox: (x: -18, y: 6, w: 60, h: 46)),
+        // the knight rides out from behind her, lance levelled, and charges straight across the stage
+        (name: "Knight's Charge", sfx: (cast: Some("summon"), launch: Some("holy_cast"), hit: Some("hit_large")), button: Special, crouching: false, anim: Summon, walk_pct: 0, guard_hits: Some(1),
+         startup: 30, active: 2, recovery: 24, damage: 120, hitstun: 34, blockstun: 16, knockback: 7, hitstop: 8,
+         hitbox: (x: 0, y: 0, w: 0, h: 0),
+         projectile: Some((x: -80, y: 37, aim_y: 0, travel_frames: 1, lifetime: 100, size: (92, 68), image: Some("knight"), drawings: 8, summon_image: Some("none"),
+                           speed: 6, pierce: true))),
+    ],
+)

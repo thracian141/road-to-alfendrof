@@ -5,9 +5,6 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 pub struct CharacterData {
     pub name: String,
-    /// Unnamed opponents used only in campaign encounter sequences.
-    #[serde(default)]
-    pub campaign_only: bool,
     /// Second line, shown only in the character select.
     #[serde(default)]
     pub subtitle: Option<String>,
@@ -173,6 +170,11 @@ pub enum AnimKind {
     /// The Goblin King's heavy: crouched while it charges, the pounce, clinging to the enemy clawing with both arms
     /// (two drawings), and dropping off (6 drawings).
     Pounce,
+    /// The Baroness's charged spray: the scepter pointed, its orb glowing brighter in three drawings as the charge builds,
+    /// the release, the recovery (6 drawings).
+    Cast,
+    /// The Baroness's scepter spin: the wind-up, four drawings of the scepter swinging round her, the recovery (6 drawings).
+    Twirl,
 }
 
 /// A move whose shots, once `shots` of them have been blocked (without a hit in between, and not too long apart),
@@ -353,6 +355,9 @@ pub struct ProjectileData {
     /// rolling (the bat wave).
     #[serde(default)]
     pub pierces_dodges: bool,
+    /// Rides on through whoever it hits (a knight's charge): it hits once and keeps going until its lifetime is up.
+    #[serde(default)]
+    pub pierce: bool,
 }
 
 impl ProjectileData {
@@ -620,6 +625,20 @@ pub struct MoveData {
     /// he is up in the air).
     #[serde(default)]
     pub volley_delay: u32,
+    /// A charged volley (the Baroness's light): a tap fires `volley_tap` shots, and every this many frames of charge adds one more,
+    /// up to `volley`. The shots scatter round a straight first one, within the projectile's `fan`, each a little faster or
+    /// slower; with no `volley_gap` they all leave in the same frame, as a spray. On a move that can't be charged the whole
+    /// volley is sprayed.
+    #[serde(default)]
+    pub volley_per_charge: u32,
+    /// How many shots a charged volley fires with no charge at all, a tap (1 if 0): the Baroness's light is a quick group
+    /// of three, and holding adds more.
+    #[serde(default)]
+    pub volley_tap: u32,
+    /// The move's hitbox is a ray of energy, blue at her scepter and deepening to indigo as it travels, drawn along the
+    /// box for as long as it is active (the Baroness's long-range heavy).
+    #[serde(default)]
+    pub ray: bool,
     /// An unblocked hit that does damage heals the attacker by this percent of their health (a bite).
     #[serde(default)]
     pub heal_pct: i32,

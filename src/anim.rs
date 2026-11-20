@@ -80,6 +80,10 @@ pub enum Frame {
     /// The Goblin King's pounce: crouched charging (two drawings that shake), leaping, clinging and clawing (two), dropping
     /// off.
     Pounce(usize),
+    /// The Baroness's charged spray: pointing, the orb glowing (three stages of charge), the release, the recovery.
+    Cast(usize),
+    /// The Baroness's scepter spin: the wind-up, the scepter in front, overhead, behind, low, the recovery.
+    Twirl(usize),
     /// Idle while he rolls a cigarette: the paper, the tobacco, the roll, a lick of the edge.
     Craft(usize),
     /// Between the alternating punches' drawings: right swinging out, right coming back, then the left.
@@ -129,6 +133,8 @@ impl Frame {
             Frame::Flail(i) => format!("flail_{i}"),
             Frame::Pounce(i) => format!("pounce_{i}"),
             Frame::Craft(i) => format!("craft_{i}"),
+            Frame::Cast(i) => format!("cast_{i}"),
+            Frame::Twirl(i) => format!("spin_{i}"),
         }
     }
 
@@ -187,6 +193,9 @@ pub const REAP_FRAMES: usize = 8;
 /// The Goblin King's flailing light and his pounce.
 pub const FLAIL_FRAMES: usize = 8;
 pub const POUNCE_FRAMES: usize = 6;
+/// The Baroness's charged cast and her scepter spin.
+pub const CAST_FRAMES: usize = 6;
+pub const TWIRL_FRAMES: usize = 6;
 
 /// Bat form drawings (one wingbeat).
 pub const BAT_FRAMES: usize = 4;
@@ -257,6 +266,12 @@ pub fn frames_for(data: &CharacterData) -> Vec<Frame> {
     }
     if data.moves.iter().any(|m| m.anim == AnimKind::Reap) {
         v.extend((0..REAP_FRAMES).map(Frame::Reap));
+    }
+    if data.moves.iter().any(|m| m.anim == AnimKind::Cast) {
+        v.extend((0..CAST_FRAMES).map(Frame::Cast));
+    }
+    if data.moves.iter().any(|m| m.anim == AnimKind::Twirl) {
+        v.extend((0..TWIRL_FRAMES).map(Frame::Twirl));
     }
     v
 }
@@ -755,6 +770,29 @@ fn attack_frame(f: &Fighter, data: &CharacterData) -> Frame {
                 6
             })
         }
+        AnimKind::Cast => Frame::Cast(if f.charge > 0 && frame + 1 == mv.startup {
+            // held at the end of the startup: the orb glows brighter as the charge builds
+            1 + ((f.charge * 3 / mv.charge_frames.max(1)) as usize).min(2)
+        } else if frame * 2 <= mv.startup {
+            0
+        } else if frame <= mv.startup {
+            1
+        } else if frame <= mv.startup + mv.active + 6 {
+            4
+        } else {
+            5
+        }),
+        AnimKind::Twirl => {
+            // one turn of the scepter round her over the hit windows
+            let spin = (mv.hits.max(1) * mv.hit_gap.max(1)).max(4);
+            Frame::Twirl(if frame <= mv.startup {
+                0
+            } else if frame <= mv.startup + spin {
+                1 + ((frame - mv.startup - 1) * 4 / spin) as usize % 4
+            } else {
+                5
+            })
+        }
         AnimKind::Summon => Frame::Summon(if frame <= mv.startup {
             ((frame * 4 / startup) as usize).min(3)
         } else if frame <= mv.startup + mv.active + 8 {
@@ -1127,6 +1165,28 @@ mod tests {
         }
         for icon in ["light", "heavy", "special"] {
             assert!(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("assets/icons/katmata/{icon}.png")).exists());
+        }
+    }
+}
+
+#[cfg(test)]
+mod drawing_files {
+    use super::*;
+
+    #[test]
+    fn every_drawing_the_baroness_needs_is_on_disk() {
+        let data = CharacterData::from_ron(include_str!("../assets/characters/baroness.ron")).unwrap();
+        let dir = std::path::Path::new("assets/sprites/baroness");
+        for f in frames_for(&data) {
+            assert!(dir.join(format!("{}.png", f.file_stem())).exists(), "{}", f.file_stem());
+        }
+        for (name, n) in effect_drawings(&data) {
+            for i in 0..n.max(2) {
+                assert!(dir.join(format!("{name}_{i}.png")).exists(), "{name}_{i}");
+            }
+        }
+        for icon in ["light", "heavy", "special"] {
+            assert!(std::path::Path::new("assets/icons/baroness").join(format!("{icon}.png")).exists());
         }
     }
 }

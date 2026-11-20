@@ -481,7 +481,7 @@ fn play_fight_sounds(
             }
             // a shot leaving or minions arriving: the move's launch sound. This follows the thrower's own
             // counter, not the shot, so a shot that hits or vanishes at once is still heard.
-            let summoning = mv.minions.is_some() && now.state == FighterState::Attack && f.state_frame == mv.startup + 1;
+            let summoning = (mv.minions.is_some() || mv.ray) && now.state == FighterState::Attack && f.state_frame == mv.startup + 1;
             if (f.shots > prev.shots && now.state == FighterState::Attack) || summoning {
                 if let Some(name) = &mv.sfx.launch {
                     play!(name, true);

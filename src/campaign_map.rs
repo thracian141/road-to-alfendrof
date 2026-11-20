@@ -34,32 +34,16 @@ pub struct Campaign {
     pub player: Option<usize>,
     /// How the last fight went: `Some(true)` for a win.
     pub won: Option<bool>,
-    /// Roster indices: preliminary opponents followed by the level's real rival.
-    pub opponents: Vec<usize>,
-    pub encounter: usize,
 }
 
 impl Campaign {
-    /// Preliminary victories and losses never change persistent level progress.
+    /// Records how the level's fight went; a win is saved. Returns whether it was the first win.
     fn record_result(&mut self, won: bool, maps: &CampaignData, progress: &mut Progress) -> bool {
         self.won = Some(won);
         match self.active {
-            Some((m, l)) if won && self.last_encounter() => progress.beat(&maps.maps[m], l),
+            Some((m, l)) if won => progress.beat(&maps.maps[m], l),
             _ => false,
         }
-    }
-
-    pub fn last_encounter(&self) -> bool {
-        !self.opponents.is_empty() && self.encounter + 1 == self.opponents.len()
-    }
-
-    pub fn advance(&mut self, sel: &mut Selection) -> bool {
-        if self.won != Some(true) || self.last_encounter() { return false; }
-        let Some(&opponent) = self.opponents.get(self.encounter + 1) else { return false; };
-        self.encounter += 1;
-        self.won = None;
-        sel.chars[1] = opponent;
-        true
     }
 }
 
@@ -80,16 +64,11 @@ impl Plugin for CampaignPlugin {
                 campaign.won = None;
             })
             .add_systems(OnEnter(AppState::Campaign), spawn_campaign)
-            // Leaving Fight clears its sprites and HUD before the next opponent is spawned.
-            .add_systems(OnEnter(AppState::CampaignEncounter), |mut next: ResMut<NextState<AppState>>| {
-                next.set(AppState::Fight);
-            })
             .add_systems(
                 Update,
                 (
                     campaign_input.run_if(in_state(AppState::Campaign)),
                     campaign_view.after(campaign_input).run_if(in_state(AppState::Campaign)),
-                    update_fight_squares.run_if(in_state(AppState::Campaign)),
                     campaign_result.run_if(in_state(AppState::Fight)),
                 ),
             );
@@ -114,29 +93,6 @@ struct MapRoot;
 struct MapCard(usize);
 #[derive(Component)]
 struct Node(usize, usize);
-#[derive(Component)]
-struct FightSquare(usize, usize, usize);
-
-fn fight_square_color(m: usize, l: usize, fight: usize, campaign: &Campaign, maps: &CampaignData, progress: &Progress) -> Color {
-    let completed = if campaign.active == Some((m, l)) {
-        campaign.encounter + usize::from(campaign.won == Some(true))
-    } else if progress.is_beaten(&maps.maps[m], l) {
-        maps.maps[m].preliminary_count(l) + 1
-    } else { 0 };
-    if fight < completed {
-        Color::srgb(0.4, 0.8, 0.5)
-    } else if fight == completed && progress.can_play(maps, m, l) {
-        Color::srgb(1.0, 0.85, 0.3)
-    } else {
-        Color::srgb(0.25, 0.27, 0.32)
-    }
-}
-
-fn update_fight_squares(maps: Res<Maps>, saved: Res<Saved>, campaign: Res<Campaign>, mut squares: Query<(&FightSquare, &mut Sprite)>) {
-    for (FightSquare(m, l, fight), mut sprite) in &mut squares {
-        sprite.color = fight_square_color(*m, *l, *fight, &campaign, &maps.0, &saved.0);
-    }
-}
 #[derive(Component)]
 struct Ring(usize);
 #[derive(Component)]
@@ -291,10 +247,8 @@ fn spawn_campaign(
     campaign.picking = false;
     let map = &maps.0.maps[campaign.map.min(maps.0.maps.len() - 1)];
     if !map.levels.is_empty() {
-        campaign.level = if (campaign.won == Some(true) && campaign.last_encounter()) || campaign.level >= map.levels.len() { saved.0.current(map) } else { campaign.level };
+        campaign.level = if campaign.won == Some(true) || campaign.level >= map.levels.len() { saved.0.current(map) } else { campaign.level };
     }
-    // Keep the current sequence while browsing the map, so its squares and resume
-    // action refer to the same encounter.
     if saved.0.visit(map) { save_progress(&saved.0); }
 
     for (m, map) in maps.0.maps.iter().enumerate() {
@@ -333,13 +287,6 @@ fn spawn_campaign(
                                 Sprite { image: assets.load("ui/campaign/node_locked.png"), custom_size: Some(Vec2::splat(size)), ..default() },
                                 Transform::from_xyz(p.x, p.y, -2.0),
                             ));
-                            let fights = map.preliminary_count(l) + 1;
-                            for fight in 0..fights {
-                                let x = p.x + fight as f32 * 7.0 - (fights - 1) as f32 * 3.5;
-                                let y = p.y - 16.0;
-                                root.spawn((Sprite::from_color(Color::srgb(0.07, 0.06, 0.1), Vec2::splat(6.0)), Transform::from_xyz(x, y, -1.0)));
-                                root.spawn((FightSquare(m, l, fight), Sprite::from_color(fight_square_color(m, l, fight, &campaign, &maps.0, &saved.0), Vec2::splat(4.0)), Transform::from_xyz(x, y, -0.9)));
-                            }
                         }
                         root.spawn((
                             Ring(m),
@@ -413,29 +360,9 @@ pub fn begin_level(campaign: &mut Campaign, player: usize, maps: &Maps, roster: 
         warn!("level {}: rival or stage not found", level.name);
         return false;
     };
-    if campaign.active == Some((campaign.map, campaign.level)) && campaign.player == Some(player)
-        && !campaign.opponents.is_empty() && !(campaign.won == Some(true) && campaign.last_encounter()) {
-        sel.chars[0] = player;
-        sel.chars[1] = campaign.opponents[campaign.encounter];
-        sel.stage = stage;
-        campaign.advance(sel);
-        campaign.won = None;
-        campaign.picking = false;
-        return true;
-    }
-    let generics: Vec<usize> = roster.0.iter().enumerate().filter_map(|(i, c)| c.campaign_only.then_some(i)).collect();
-    let count = maps.0.maps[campaign.map].preliminary_count(campaign.level);
-    if generics.len() < count {
-        warn!("level {}: not enough generic opponents", level.name);
-        return false;
-    }
-    // Stable rotation gives each level a different group, with no repeats within a level.
-    let offset = campaign.map * 3 + campaign.level * 2;
-    campaign.opponents = (0..count).map(|i| generics[(offset + i) % generics.len()]).chain(std::iter::once(rival)).collect();
-    campaign.encounter = 0;
     campaign.player = Some(player);
     sel.chars[0] = player;
-    sel.chars[1] = campaign.opponents[0];
+    sel.chars[1] = rival;
     sel.stage = stage;
     campaign.active = Some((campaign.map, campaign.level));
     campaign.won = None;
@@ -519,7 +446,7 @@ fn campaign_view(
             let state = if !saved.0.campaign_unlocked(&maps.0, campaign.map) { "campaign locked" }
                 else if !saved.0.can_play(&maps.0, campaign.map, campaign.level) { "locked" }
                 else if saved.0.is_beaten(map, campaign.level) { "cleared" } else { "open" };
-            (level.name.clone(), format!("{} fights > {rival}    {}    {}", map.preliminary_count(campaign.level), "*".repeat(level.difficulty as usize), state))
+            (level.name.clone(), format!("vs {rival}    {}    {}", "*".repeat(level.difficulty as usize), state))
         }
     };
     if name.0 != new_name {
@@ -567,8 +494,7 @@ pub fn banner_line(campaign: &Campaign, mode: Mode) -> Option<&'static str> {
         return None;
     }
     Some(match campaign.won {
-        Some(true) if campaign.last_encounter() => "Level cleared    Enter: map",
-        Some(true) => "Enter: next opponent    Esc: map",
+        Some(true) => "Level cleared    Enter: map",
         _ => "Enter: retry    Esc: map",
     })
 }
@@ -586,7 +512,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_level_fights_generics_before_its_real_rival_and_only_then_unlocks() {
+    fn every_level_starts_straight_against_its_rival_and_only_a_win_unlocks_the_next() {
         let maps = Maps(CampaignData::from_ron(include_str!("../assets/campaign/campaign.ron")).unwrap());
         let roster = Roster(crate::load_dir("characters", t2f::sim::CharacterData::from_ron));
         let stages = Stages(crate::load_dir("stages", t2f::stage::StageData::from_ron));
@@ -597,36 +523,11 @@ mod tests {
                 let mut selection = Selection::default();
                 let mut progress = Progress::default();
                 assert!(begin_level(&mut campaign, player, &maps, &roster, &stages, &mut selection));
-                let count = if l + 1 == map.levels.len() { 3 } else { 2 };
-                assert_eq!(campaign.opponents.len(), count + 1);
-                for i in 0..count {
-                    assert_eq!(campaign.encounter, i);
-                    assert!(roster.0[selection.chars[1]].campaign_only);
-                    assert!(roster.0[selection.chars[1]].name.is_empty());
-                    assert!(!campaign.opponents[..i].contains(&selection.chars[1]));
-                    // A defeat keeps this opponent and never grants progress.
-                    assert!(!campaign.record_result(false, &maps.0, &mut progress));
-                    assert!(!campaign.advance(&mut selection));
-                    assert_eq!(campaign.encounter, i);
-                    assert!(!campaign.record_result(true, &maps.0, &mut progress));
-                    assert!(!progress.is_beaten(map, l));
-                    assert_eq!(fight_square_color(m, l, i, &campaign, &maps.0, &progress), Color::srgb(0.4, 0.8, 0.5));
-                    // Returning via the map resumes at the next fight.
-                    assert!(begin_level(&mut campaign, player, &maps, &roster, &stages, &mut selection));
-                    assert_eq!(campaign.encounter, i + 1);
-                    assert_eq!(campaign.won, None);
-                }
                 assert_eq!(roster.0[selection.chars[1]].name, rival_for(level, &roster.0[player].name));
-                assert!(campaign.last_encounter());
                 assert!(!campaign.record_result(false, &maps.0, &mut progress));
                 assert!(!progress.is_beaten(map, l));
                 assert!(campaign.record_result(true, &maps.0, &mut progress));
                 assert!(progress.is_beaten(map, l));
-                assert!(!campaign.advance(&mut selection));
-                // Re-entering even a cleared level starts its preliminary sequence again.
-                assert!(begin_level(&mut campaign, player, &maps, &roster, &stages, &mut selection));
-                assert_eq!(campaign.encounter, 0);
-                assert!(roster.0[selection.chars[1]].campaign_only);
             }
         }
     }

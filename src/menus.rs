@@ -435,7 +435,6 @@ fn spawn_char_select(
     let footer = spawn_text(&mut commands, state.clone(), "A/D or Left/Right: turn    Enter: pick    Esc: back".into(), 8.0, Color::srgb(0.6, 0.6, 0.7), -99.0);
     commands.entity(footer).insert(Anchor::BOTTOM_CENTER);
     for (index, c) in roster.0.iter().enumerate() {
-        if c.campaign_only { continue; }
         // portraits/<sprite folder>.png, if it exists
         let folder = c.sprites.clone().unwrap_or_else(|| c.name.to_lowercase());
         let has_picture = crate::assets_dir().join(format!("portraits/{folder}.png")).exists();
@@ -488,7 +487,7 @@ fn carousel_nav(keys: Res<crate::MenuInput>, mut menu: ResMut<Menu>, roster: Res
         menu.cursor = host;
         ui.write(UiSound::Move);
     } else if turn != 0 {
-        let shown: Vec<usize> = (0..roster.len()).filter(|&i| !roster[i].campaign_only && roster[i].secret_behind.is_none()).collect();
+        let shown: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].secret_behind.is_none()).collect();
         if let Some(at) = shown.iter().position(|&i| i == host) {
             menu.cursor = shown[(at as i32 + turn).rem_euclid(shown.len() as i32) as usize];
             ui.write(UiSound::Move);
@@ -507,7 +506,7 @@ fn carousel_slide(time: Res<Time>, menu: Res<Menu>, roster: Res<Roster>, mut slo
     let ease = 1.0 - (-18.0 * time.delta_secs()).exp();
     let roster = &roster.0;
     // the secrets aren't in the ring: they take the place of the fighter they hide behind while picked
-    let ring: Vec<usize> = (0..roster.len()).filter(|&i| !roster[i].campaign_only && roster[i].secret_behind.is_none()).collect();
+    let ring: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].secret_behind.is_none()).collect();
     let place = |i: usize| ring.iter().position(|&r| r == host_of(roster, i)).unwrap_or(0);
     for (Slot(index), mut tf, mut visibility) in &mut slots {
         let secret = roster[*index].secret_behind.is_some();
@@ -1298,28 +1297,6 @@ mod tests {
             let mut keys = ButtonInput::default();
             keys.press(key);
             assert_eq!(left_right(&keys), expected);
-        }
-    }
-
-    #[test]
-    fn character_carousel_skips_campaign_only_opponents() {
-        let mut roster = crate::load_dir("characters", t2f::sim::CharacterData::from_ron);
-        roster.sort_by_key(|c| (c.campaign_only, c.menu_last));
-        let count = roster.len();
-        let mut app = App::new();
-        app.insert_resource(Roster(roster))
-            .insert_resource(Menu { cursor: 0, len: count, per_page: 1 })
-            .init_resource::<crate::MenuInput>()
-            .add_message::<UiSound>()
-            .add_systems(Update, carousel_nav);
-        for direction in [KeyCode::ArrowRight, KeyCode::ArrowLeft] {
-            for _ in 0..count * 2 {
-                app.world_mut().resource_mut::<crate::MenuInput>().0.reset_all();
-                app.world_mut().resource_mut::<crate::MenuInput>().0.press(direction);
-                app.update();
-                let index = app.world().resource::<Menu>().cursor;
-                assert!(!app.world().resource::<Roster>().0[index].campaign_only);
-            }
         }
     }
 

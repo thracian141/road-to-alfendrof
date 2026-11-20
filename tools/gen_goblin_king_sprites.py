@@ -399,7 +399,11 @@ def frames():
     out["block"] = pose(Pose(drop=1, squash=1, spread=1, lean=2), (0, 0), (0, 0), drawn=guard)
     # knocked out: flat on his back
     ko = pose(Pose(), (-4, 13), (4, 13))
-    ko = tilt(ko, 90, pivot=(CX, FLOOR - 9))
+    # turned on a wider canvas: on the frame itself the head would swing off the left edge and be cut off
+    pad = 40
+    big = Image.new("RGBA", (W + 2 * pad, H + 2 * pad), (0, 0, 0, 0))
+    big.alpha_composite(ko, (pad, pad))
+    ko = tilt(big, 90, (CX + pad, FLOOR - 9 + pad))
     piece = ko.crop(ko.getbbox())
     ko2 = blank()
     ko2.alpha_composite(piece, (CX - piece.width // 2, FLOOR + 1 - piece.height))

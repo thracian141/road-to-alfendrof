@@ -70,8 +70,6 @@ pub enum AppState {
     CharSelect,
     /// The campaign's maps.
     Campaign,
-    /// Clears the previous fight before spawning the next campaign opponent.
-    CampaignEncounter,
     StageSelect,
     Online,
     Social,
@@ -395,7 +393,7 @@ fn main() {
         .insert_resource(Roster({
             // characters marked `menu_last` go to the end
             let mut roster = load_dir("characters", CharacterData::from_ron);
-            roster.sort_by_key(|c| (c.campaign_only, c.menu_last));
+            roster.sort_by_key(|c| c.menu_last);
             roster
         }))
         .insert_resource(Stages(load_dir("stages", StageData::from_ron)))
@@ -462,6 +460,7 @@ fn main() {
         .add_systems(Update, sync_charge_bars.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (briefing::press_ready, briefing::update).run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_scribe_effects.run_if(in_state(AppState::Fight)))
+        .add_systems(Update, render::animate_rays.run_if(in_state(AppState::Fight)))
         .add_systems(Update, (outline::animate_outline.after(render::animate_body), render::animate_away, footprints::leave_footprints, footprints::fade_footprints).run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_whale.run_if(in_state(AppState::Fight)))
         .add_systems(Update, render::animate_shield.run_if(in_state(AppState::Fight)))
@@ -810,7 +809,7 @@ fn step_sim(
     sim.0.step(inputs, [&roster.0[sel.chars[0]], &roster.0[sel.chars[1]]]);
 }
 
-/// The bar over a fighter charging a move (the Goblin King's pounce), and its fill.
+/// The bar over a fighter charging a move (the Goblin King's pounce, the Baroness's spray), and its fill.
 #[derive(Component)]
 struct ChargeBar(usize, bool);
 
@@ -859,7 +858,7 @@ fn sync_charge_bars(
             sprite.custom_size = Some(Vec2::new(w, 2.0));
             tf.translation.x = x - CHARGE_BAR_W / 2.0 + w / 2.0;
             // red until it holds on (the pounce clings), then gold, white when full
-            let clings = mv.latch.is_some_and(|l| f.charge >= l.min_charge);
+            let clings = mv.latch.is_none_or(|l| f.charge >= l.min_charge);
             sprite.color = if frac >= 1.0 { Color::WHITE } else if clings { Color::srgb(1.0, 0.85, 0.25) } else { Color::srgb(0.85, 0.3, 0.25) };
         } else {
             tf.translation.x = x;
@@ -996,10 +995,7 @@ fn sync_hud(
         timer.0 = new_timer;
     }
 
-    let name = |i: usize| {
-        let c = &roster.0[sel.chars[i]];
-        if c.campaign_only { "Opponent".to_string() } else { c.name.clone() }
-    };
+    let name = |i: usize| roster.0[sel.chars[i]].name.clone();
     let new_banner = match s.phase {
         // 3, 2, 1, then FIGHT! for the first moments of the round
         Phase::Countdown(0) if waiting => "Connecting...".to_string(),
@@ -1021,7 +1017,6 @@ fn sync_hud(
     let new_sub = match s.phase {
         _ if waiting => "Waiting for the other players...".to_string(),
         Phase::MatchOver => campaign_map::banner_line(&campaign, *mode).unwrap_or("Enter: rematch    Esc: menu").to_string(),
-        Phase::Countdown(_) if campaign.active.is_some() => format!("Fight {}/{}    Round {}", campaign.encounter + 1, campaign.opponents.len(), s.round),
         Phase::Countdown(_) => format!("Round {}", s.round),
         _ => String::new(),
     };
@@ -1058,7 +1053,7 @@ fn restart_match(
     input: Res<MenuInput>,
     mut sim: ResMut<Sim>,
     roster: Res<Roster>,
-    mut sel: ResMut<Selection>,
+    sel: Res<Selection>,
     mode: Res<Mode>,
     mut campaign: ResMut<campaign_map::Campaign>,
     mut next: ResMut<NextState<AppState>>,
@@ -1075,11 +1070,7 @@ fn restart_match(
             commands.remove_resource::<online::NetSession>();
             next.set(AppState::Social);
         } else if campaign.active.is_some() && campaign.won == Some(true) {
-            if campaign.advance(&mut sel) {
-                next.set(AppState::CampaignEncounter);
-            } else {
-                next.set(AppState::Campaign);
-            }
+            next.set(AppState::Campaign);
         } else {
             campaign.won = None;
             *sim = fresh_sim(&roster, &sel, *mode, false);
@@ -1116,23 +1107,18 @@ mod controller_tests {
     use bevy::input::gamepad::GamepadButton as B;
 
     #[test]
-    fn campaign_confirm_loads_next_opponent_before_returning_to_the_map() {
+    fn campaign_confirm_after_a_win_returns_to_the_map() {
         let mut app = App::new();
         let data = CharacterData::from_ron(include_str!("sim/classic_fighter.ron")).unwrap();
         let mut sim = Sim::default();
         sim.0.phase = Phase::MatchOver;
-        app.insert_resource(sim).insert_resource(Roster(vec![data.clone(), data.clone(), data]))
+        app.insert_resource(sim).insert_resource(Roster(vec![data.clone(), data]))
             .insert_resource(Selection::default()).insert_resource(Mode::VsCpu)
-            .insert_resource(campaign_map::Campaign { active: Some((0, 0)), opponents: vec![1, 2], won: Some(true), ..default() })
+            .insert_resource(campaign_map::Campaign { active: Some((0, 0)), won: Some(true), ..default() })
             .init_resource::<MenuInput>().init_resource::<NextState<AppState>>()
             .add_systems(Update, restart_match);
         app.update();
         app.world_mut().resource_mut::<MenuInput>().0.press(KeyCode::Enter);
-        app.update();
-        assert_eq!(app.world().resource::<Selection>().chars[1], 2);
-        assert_eq!(app.world().resource::<campaign_map::Campaign>().encounter, 1);
-        assert!(matches!(app.world().resource::<NextState<AppState>>(), NextState::Pending(AppState::CampaignEncounter)));
-        app.world_mut().resource_mut::<campaign_map::Campaign>().won = Some(true);
         app.update();
         assert!(matches!(app.world().resource::<NextState<AppState>>(), NextState::Pending(AppState::Campaign)));
     }

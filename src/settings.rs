@@ -71,6 +71,9 @@ impl Display {
 
 #[derive(Resource, Clone, PartialEq, Debug)]
 pub struct Settings {
+    /// Session-only mute for automated previews or an explicit `--mute` launch.
+    /// Not included in Saved, so testing never changes the user's volume settings.
+    pub muted: bool,
     /// 0 to 10.
     pub music_volume: u8,
     /// 0 to 10: hits, blocks and whooshes in a fight.
@@ -84,7 +87,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { music_volume: 7, sfx_volume: 8, display: Display::Windowed, username: String::new(), keys: ACTIONS.map(|(_, _, key)| key) }
+        Settings { muted: false, music_volume: 7, sfx_volume: 8, display: Display::Windowed, username: String::new(), keys: ACTIONS.map(|(_, _, key)| key) }
     }
 }
 
@@ -93,10 +96,12 @@ impl Settings {
 
     /// The volume to play music at (squared, so the steps sound even).
     pub fn music_gain(&self) -> f32 {
+        if self.muted { return 0.0; }
         (self.music_volume as f32 / Self::MAX_VOLUME as f32).powi(2)
     }
 
     pub fn sfx_gain(&self) -> f32 {
+        if self.muted { return 0.0; }
         (self.sfx_volume as f32 / Self::MAX_VOLUME as f32).powi(2)
     }
 
@@ -170,6 +175,7 @@ pub(crate) fn write_file(path: &std::path::Path, text: &str) -> Result<(), Strin
 
 pub fn load() -> Settings {
     let mut settings = Settings::default();
+    settings.muted = std::env::args().any(|arg| arg == "--mute" || arg == "--screenshot");
     let Ok(text) = std::fs::read_to_string(settings_path()) else { return settings };
     let saved: Saved = match ron::from_str(&text) {
         Ok(saved) => saved,

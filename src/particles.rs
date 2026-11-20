@@ -753,14 +753,31 @@ pub fn emit(
         for p in s.projectiles.iter().filter(|p| p.owner == i) {
             let at = Vec2::new((p.x / PX) as f32, GROUND_Y + (p.y / PX) as f32);
             let mv = &data.moves[p.move_index];
-            // the blue particle is blue, everything else glitters gold
-            let blue_orb = [Color::srgb(0.4, 0.65, 1.0), Color::srgb(0.7, 0.88, 1.0), Color::WHITE];
-            let gold = if mv.projectile.as_ref().is_some_and(|d| d.image_name() == "orb") { &blue_orb } else { &gold };
-            if p.age == 1 {
-                burst(&mut commands, &mut seen, at, 14, 50.0, 150.0, gold, 3.0, 0.4, 0.0);
+            // a knight's charge kicks up dust under the hooves instead of glittering
+            if mv.projectile.as_ref().is_some_and(|d| d.pierce) {
+                if s.frame % 3 == 0 {
+                    let hooves = Vec2::new(at.x - p.vx.signum() as f32 * seen.range(4.0, 18.0), GROUND_Y + 1.0);
+                    let dust = [Color::srgb(0.75, 0.68, 0.6), Color::srgb(0.6, 0.55, 0.5)];
+                    spawn(&mut commands, hooves, Vec2::new(-p.vx.signum() as f32 * seen.range(10.0, 30.0), seen.range(8.0, 24.0)), dust[(s.frame as usize / 3) % 2], 3.0, 0.4, 0.0, false);
+                }
+                continue;
             }
-            let size = 2.0 + (p.power - 100) as f32 / 40.0;
-            for _ in 0..2 {
+            // the blue particle and the Baroness's spells are blue (her blast deepening to indigo), everything else glitters gold
+            let blue_orb = [Color::srgb(0.4, 0.65, 1.0), Color::srgb(0.7, 0.88, 1.0), Color::WHITE];
+            let indigo = [Color::srgb(0.35, 0.55, 1.0), Color::srgb(0.36, 0.26, 0.85), Color::srgb(0.75, 0.85, 1.0)];
+            let image = mv.projectile.as_ref().map_or("", |d| d.image_name());
+            let gold = match image {
+                "orb" | "bolt" => &blue_orb,
+                "blast" => &indigo,
+                _ => &gold,
+            };
+            // (a spray of tiny bolts gets a smaller flash and a thinner trail each, or there would be too many)
+            let tiny = image == "bolt";
+            if p.age == 1 {
+                burst(&mut commands, &mut seen, at, if tiny { 1 } else { 14 }, 50.0, 150.0, gold, if tiny { 2.0 } else { 3.0 }, 0.4, 0.0);
+            }
+            let size = if tiny { 1.0 } else { 2.0 + (p.power - 100) as f32 / 40.0 };
+            for _ in 0..if tiny { (s.frame % 2) as usize } else { 2 } {
                 let v = Vec2::new(seen.range(-15.0, 15.0), seen.range(-15.0, 15.0));
                 let off = Vec2::new(seen.range(-5.0, 5.0), seen.range(-5.0, 5.0));
                 spawn(&mut commands, at + off, v, gold[(seen.rand() * 3.0) as usize % 3], size.round(), 0.3, 0.0, true);
